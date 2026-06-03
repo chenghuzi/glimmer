@@ -291,6 +291,14 @@ def build_cache(
 @click.option("--max-train-samples", default=None, type=click.IntRange(min=1))
 @click.option("--max-eval-samples", default=None, type=click.IntRange(min=1))
 @click.option("--max-test-samples", default=None, type=click.IntRange(min=1))
+@click.option("--remix-train-validation/--no-remix-train-validation", default=False, show_default=True)
+@click.option(
+    "--remix-validation-ratio",
+    default=0.10,
+    show_default=True,
+    type=click.FloatRange(min=0.0, max=1.0, min_open=True, max_open=True),
+)
+@click.option("--remix-seed", default=42, show_default=True, type=int)
 @click.option("--learning-rate", default=1e-4, show_default=True, type=float)
 @click.option("--warmup-ratio", default=0.03, show_default=True, type=click.FloatRange(min=0, max=1))
 @click.option("--weight-decay", default=0.0, show_default=True, type=click.FloatRange(min=0))
@@ -338,6 +346,9 @@ def train(
     max_train_samples: int | None,
     max_eval_samples: int | None,
     max_test_samples: int | None,
+    remix_train_validation: bool,
+    remix_validation_ratio: float,
+    remix_seed: int,
     learning_rate: float,
     warmup_ratio: float,
     weight_decay: float,
@@ -401,6 +412,20 @@ def train(
     train_dataset = dataset["train"]
     eval_dataset = dataset["validation"]
     test_dataset = dataset["test"]
+    if remix_train_validation:
+        train_dataset, eval_dataset = remix_train_validation_split(
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            validation_ratio=remix_validation_ratio,
+            seed=remix_seed,
+        )
+        click.echo("== Remixed train/validation split ==")
+        click.echo(f"remix_validation_ratio: {remix_validation_ratio}")
+        click.echo(f"remix_seed: {remix_seed}")
+        click.echo(f"train_samples: {len(train_dataset)} origin={dataset_origin_counts(train_dataset)}")
+        click.echo(f"validation_samples: {len(eval_dataset)} origin={dataset_origin_counts(eval_dataset)}")
+        click.echo(f"test_samples_unchanged: {len(test_dataset)}")
+
     if max_train_samples is not None:
         train_dataset = train_dataset.select(range(min(max_train_samples, len(train_dataset))))
     if max_eval_samples is not None:
@@ -1028,6 +1053,71 @@ def setup_wandb(
         os.environ["WANDB_ENTITY"] = entity
     wandb_lib.login(key=api_key, relogin=True)
     click.echo(f"wandb enabled: project={project} run={run_name}")
+
+
+def remix_train_validation_split(
+    *,
+    train_dataset: Any,
+    eval_dataset: Any,
+    validation_ratio: float,
+    seed: int,
+) -> tuple[Any, Any]:
+    from collections import defaultdict
+
+    from datasets import concatenate_datasets
+
+    combined = concatenate_datasets([train_dataset, eval_dataset])
+    total = len(combined)
+    if total < 2:
+        raise click.ClickException("Need at least two samples to remix train/validation.")
+
+    target_eval_count = int(round(total * validation_ratio))
+    target_eval_count = min(max(1, target_eval_count), total - 1)
+
+    rng = np.random.default_rng(seed)
+    groups: dict[str, list[int]] = defaultdict(list)
+    for index, row in enumerate(combined):
+        groups[label_vector_key(row)].append(index)
+
+    train_indices: list[int] = []
+    eval_indices: list[int] = []
+    for indices in groups.values():
+        shuffled = list(indices)
+        rng.shuffle(shuffled)
+        if len(shuffled) == 1:
+            train_indices.extend(shuffled)
+            continue
+
+        group_eval_count = int(round(len(shuffled) * validation_ratio))
+        group_eval_count = min(max(1, group_eval_count), len(shuffled) - 1)
+        eval_indices.extend(shuffled[:group_eval_count])
+        train_indices.extend(shuffled[group_eval_count:])
+
+    if len(eval_indices) > target_eval_count:
+        rng.shuffle(eval_indices)
+        train_indices.extend(eval_indices[target_eval_count:])
+        eval_indices = eval_indices[:target_eval_count]
+    elif len(eval_indices) < target_eval_count:
+        rng.shuffle(train_indices)
+        move_count = min(target_eval_count - len(eval_indices), len(train_indices) - 1)
+        eval_indices.extend(train_indices[:move_count])
+        train_indices = train_indices[move_count:]
+
+    rng.shuffle(train_indices)
+    rng.shuffle(eval_indices)
+    return combined.select(train_indices), combined.select(eval_indices)
+
+
+def label_vector_key(row: dict) -> str:
+    return "".join(str(int(value)) for value in row["label_vector"])
+
+
+def dataset_origin_counts(dataset: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in dataset:
+        split = str(row["split"])
+        counts[split] = counts.get(split, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def enable_gradient_checkpointing(model: Any) -> None:
