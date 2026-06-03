@@ -30,6 +30,7 @@ DEFAULT_OUTPUT_DIR = "outputs/gemma4-asd-lora-r32"
 DEFAULT_CACHE_DIR = "outputs/asd_ds_processor_cache"
 DEFAULT_WANDB_PROJECT = "gemma4-asd-ft"
 DEFAULT_RUN_NAME = "gemma4-asd-lora-r32"
+DEFAULT_LITERT_TEMPLATE_OVERRIDE = "litert-community/gemma-4-E4B-it-litert-lm"
 CACHE_VERSION = "gemma4_asd_ds_processor_cache_v1"
 CACHE_KINDS = ("supervised", "prompt")
 LANGUAGE_LORA_REGEX = (
@@ -571,10 +572,219 @@ def train(
         )
 
 
+@cli.command("export")
+@click.option("--cuda-devices", default="1,2,3", show_default=True, help="Physical CUDA device IDs for merging.")
+@click.option("--model-dir", default=DEFAULT_MODEL_DIR, show_default=True, type=click.Path(path_type=Path))
+@click.option("--adapter-dir", required=True, type=click.Path(path_type=Path))
+@click.option("--merged-model-dir", default=None, type=click.Path(path_type=Path))
+@click.option("--litert-out-dir", default=None, type=click.Path(path_type=Path))
+@click.option("--max-memory-per-gpu", default="22GiB", show_default=True)
+@click.option("--bf16/--no-bf16", default=True, show_default=True)
+@click.option("--overwrite/--no-overwrite", default=False, show_default=True)
+@click.option("--externalize-embedder/--no-externalize-embedder", default=True, show_default=True)
+@click.option("--export-vision-encoder/--no-export-vision-encoder", default=True, show_default=True)
+@click.option(
+    "--task",
+    default="image_text_to_text",
+    show_default=True,
+    help="LiteRT export task. Use an empty string to omit the flag.",
+)
+@click.option("--jinja-chat-template-override", default=DEFAULT_LITERT_TEMPLATE_OVERRIDE, show_default=True)
+@click.option("--inspect/--no-inspect", default=True, show_default=True)
+@click.option("--smoke-test/--no-smoke-test", default=False, show_default=True)
+@click.option("--smoke-backend", default="gpu", show_default=True, type=click.Choice(["gpu", "cpu"]))
+def export_model(
+    cuda_devices: str,
+    model_dir: Path,
+    adapter_dir: Path,
+    merged_model_dir: Path | None,
+    litert_out_dir: Path | None,
+    max_memory_per_gpu: str,
+    bf16: bool,
+    overwrite: bool,
+    externalize_embedder: bool,
+    export_vision_encoder: bool,
+    task: str,
+    jinja_chat_template_override: str,
+    inspect: bool,
+    smoke_test: bool,
+    smoke_backend: str,
+) -> None:
+    """Merge a LoRA adapter and export it as a LiteRT-LM package."""
+    configure_runtime(cuda_devices)
+    adapter_dir = adapter_dir.expanduser()
+    merged_model_dir = (merged_model_dir or default_export_dir(adapter_dir, "merged")).expanduser()
+    litert_out_dir = (litert_out_dir or default_export_dir(adapter_dir, "litert")).expanduser()
+
+    validate_existing_adapter_dir(adapter_dir)
+    prepare_output_dir(merged_model_dir, overwrite=overwrite)
+    prepare_output_dir(litert_out_dir, overwrite=overwrite)
+
+    click.echo("== Export setup ==")
+    click.echo(f"model_dir: {model_dir}")
+    click.echo(f"adapter_dir: {adapter_dir}")
+    click.echo(f"merged_model_dir: {merged_model_dir}")
+    click.echo(f"litert_out_dir: {litert_out_dir}")
+
+    merge_lora_adapter(
+        model_dir=model_dir,
+        adapter_dir=adapter_dir,
+        merged_model_dir=merged_model_dir,
+        max_memory_per_gpu=max_memory_per_gpu,
+        bf16=bf16,
+    )
+    litertlm_file = export_litert_lm(
+        merged_model_dir=merged_model_dir,
+        litert_out_dir=litert_out_dir,
+        externalize_embedder=externalize_embedder,
+        export_vision_encoder=export_vision_encoder,
+        task=task,
+        jinja_chat_template_override=jinja_chat_template_override,
+    )
+
+    if inspect:
+        inspect_litert_lm(litertlm_file)
+    if smoke_test:
+        smoke_test_litert_lm(litertlm_file, backend=smoke_backend)
+
+    click.echo("EXPORT DONE")
+    click.echo(f"litertlm_file: {litertlm_file}")
+
+
+def default_export_dir(adapter_dir: Path, suffix: str) -> Path:
+    adapter_dir = adapter_dir.expanduser()
+    return adapter_dir.parent / f"{adapter_dir.name}-{suffix}"
+
+
+def validate_existing_adapter_dir(adapter_dir: Path) -> None:
+    if not adapter_dir.is_dir():
+        raise click.ClickException(f"--adapter-dir does not exist or is not a directory: {adapter_dir}")
+
+    required_files = ("adapter_config.json", "adapter_model.safetensors")
+    missing = [name for name in required_files if not (adapter_dir / name).is_file()]
+    if missing:
+        raise click.ClickException(f"--adapter-dir is missing required file(s): {', '.join(missing)}")
+
+
+def prepare_output_dir(path: Path, *, overwrite: bool) -> None:
+    ensure_under_outputs(path)
+    if not path.exists():
+        return
+    if not path.is_dir():
+        raise click.ClickException(f"Output path exists and is not a directory: {path}")
+    if not any(path.iterdir()):
+        return
+    if not overwrite:
+        raise click.ClickException(f"Output directory already exists and is not empty: {path}")
+    shutil.rmtree(path)
+
+
+def ensure_under_outputs(path: Path) -> None:
+    root = Path("outputs").resolve()
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise click.ClickException(f"Generated export artifacts must stay under outputs/: {path}") from exc
+
+
+def merge_lora_adapter(
+    *,
+    model_dir: Path,
+    adapter_dir: Path,
+    merged_model_dir: Path,
+    max_memory_per_gpu: str,
+    bf16: bool,
+) -> None:
+    import torch
+    from peft import PeftModel
+    from transformers import AutoProcessor, Gemma4ForConditionalGeneration
+
+    click.echo("== Merging LoRA adapter ==")
+    processor = AutoProcessor.from_pretrained(model_dir, local_files_only=True)
+    model_kwargs: dict[str, Any] = {
+        "dtype": torch.bfloat16 if bf16 else torch.float16,
+        "device_map": "auto",
+        "local_files_only": True,
+    }
+    if torch.cuda.is_available():
+        model_kwargs["max_memory"] = {idx: max_memory_per_gpu for idx in range(torch.cuda.device_count())}
+
+    base_model = Gemma4ForConditionalGeneration.from_pretrained(model_dir, **model_kwargs)
+    model = PeftModel.from_pretrained(base_model, adapter_dir)
+    model = model.merge_and_unload()
+    model.save_pretrained(merged_model_dir, safe_serialization=True)
+    processor.save_pretrained(merged_model_dir)
+    del model
+    del base_model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    click.echo(f"Saved merged HF model to {merged_model_dir}")
+
+
+def export_litert_lm(
+    *,
+    merged_model_dir: Path,
+    litert_out_dir: Path,
+    externalize_embedder: bool,
+    export_vision_encoder: bool,
+    task: str,
+    jinja_chat_template_override: str,
+) -> Path:
+    litert_torch = find_tool("litert-torch")
+    command = [
+        litert_torch,
+        "export_hf",
+        f"--model={merged_model_dir}",
+        f"--output_dir={litert_out_dir}",
+    ]
+    if externalize_embedder:
+        command.append("--externalize_embedder")
+    if task.strip():
+        command.append(f"--task={task.strip()}")
+    if export_vision_encoder:
+        command.append("--export_vision_encoder")
+    if jinja_chat_template_override.strip():
+        command.append(f"--jinja_chat_template_override={jinja_chat_template_override.strip()}")
+
+    click.echo("== Exporting LiteRT-LM package ==")
+    click.echo(" ".join(command))
+    run_command(command)
+
+    litertlm_file = litert_out_dir / "model.litertlm"
+    if not litertlm_file.is_file():
+        raise click.ClickException(f"LiteRT export finished but did not create expected file: {litertlm_file}")
+    return litertlm_file
+
+
+def inspect_litert_lm(litertlm_file: Path) -> None:
+    litert_lm_peek = find_tool("litert-lm-peek")
+    click.echo("== Inspecting LiteRT-LM package ==")
+    run_command([litert_lm_peek, "--litertlm_file", str(litertlm_file)])
+
+
+def smoke_test_litert_lm(litertlm_file: Path, *, backend: str) -> None:
+    litert_lm = find_tool("litert-lm")
+    click.echo("== LiteRT-LM text smoke test ==")
+    run_command(
+        [
+            litert_lm,
+            "run",
+            str(litertlm_file),
+            f"--backend={backend}",
+            "--prompt=Return {\"features\":{\"example\":false}} and nothing else.",
+        ]
+    )
+
+
 def find_tool(name: str) -> str:
     path = shutil.which(name)
     if path:
         return path
+
+    venv_path = Path(os.environ.get("VIRTUAL_ENV", Path(__file__).parent / ".venv")) / "bin" / name
+    if venv_path.is_file():
+        return str(venv_path)
 
     brew_path = BREW_BIN / name
     if brew_path.is_file():
