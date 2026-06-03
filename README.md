@@ -259,6 +259,18 @@ WANDB_API_KEY=...
 
 ## LiteRT-LM iOS Export
 
+The trained LoRA adapter only changes language-model projection layers:
+
+```text
+.*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$
+```
+
+It does not modify the Gemma 4 audio encoder or audio adapter. Audio encoder
+weights remain base Gemma 4, so an audio-capable LiteRT-LM package can
+plausibly reuse official base Gemma 4 audio sections with the fine-tuned
+language core. Treat that as an export/packaging experiment until it is
+validated with LiteRT-LM inference and generated-label metrics.
+
 Working 4-bit LiteRT-LM export command for the latest trained adapter:
 
 ```bash
