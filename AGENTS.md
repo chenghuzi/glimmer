@@ -30,7 +30,7 @@ uv add <package>
 - Dataset adapter: `asd_ds_dataset.py`
 - Training CLI: `run_train.py`
 - Prompt files: `prompts/en/*.md`, `prompts/zh/*.md`
-- Chinese prompt training script: `scripts/train_zh_v2.sh`
+- Chinese prompt training script: `scripts/train_zh_v2.sh`; use `SKIP_CACHE=1 ./scripts/train_zh_v2.sh` when the matching cache already exists.
 - Fine-tuning plan: `docs/ft_plan.md`
 - iOS deployment plan: `docs/deploy2ios.md`
 - Language-agnostic plan: `docs/unfinished_lang_agnostic.md`
@@ -136,6 +136,8 @@ Then train with:
 Use `--workers 8` for faster cache rebuilds on this workstation. Lower it if CPU, RAM, or disk I/O becomes saturated.
 
 Cache keys include model path, media parameters, `--prompt-lang`, and prompt file hashes. If `--max-frames`, `--max-audio-seconds`, `--image-width`, `--frame-fps`, model path, prompt language, or prompt file contents change, rebuild cache.
+
+The Chinese training script defaults to physical GPUs `2,3`, maps them to logical CUDA devices `0,1`, and supports `SKIP_CACHE=1` to reuse an existing cache.
 
 ## Metrics and Outputs
 

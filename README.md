@@ -251,6 +251,14 @@ It builds the matching `--prompt-lang zh` processor cache, then trains `outputs/
 
 The script uses 8 cache workers by default. Override it with `CACHE_WORKERS=<n>` if needed.
 
+If the matching cache is already built, skip cache rebuild:
+
+```bash
+SKIP_CACHE=1 ./scripts/train_zh_v2.sh
+```
+
+The script trains on physical GPUs `2,3` by default and passes logical CUDA devices `0,1` to `run_train.py`. Override with `TRAIN_PHYSICAL_CUDA_DEVICES=<ids>` and `TRAIN_CUDA_DEVICES=<ids>` if needed.
+
 ## Outputs
 
 Training saves LoRA adapter weights, not a duplicate full base model:
