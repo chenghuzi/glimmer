@@ -16,6 +16,9 @@ The model output is a canonical JSON label report with `B01` through `B10`. This
 |   |-- ft_plan.md
 |   |-- deploy2ios.md
 |   `-- unfinished_lang_agnostic.md
+|-- prompts/                 # system/user prompt files selected by --prompt-lang
+|-- scripts/
+|   `-- train_zh_v2.sh       # Chinese prompt training workflow
 `-- outputs/                 # Checkpoints, metrics, processor cache, ignored by git
 ```
 
@@ -114,6 +117,15 @@ Target JSON shape:
 }
 ```
 
+## Prompt Languages
+
+Training prompts are loaded from external Markdown files:
+
+- `prompts/en/system.md` and `prompts/en/user.md`
+- `prompts/zh/system.md` and `prompts/zh/user.md`
+
+Use `--prompt-lang en` or `--prompt-lang zh` on `smoke-test`, `build-cache`, and `train`. Prompt file contents are part of the processor-cache hash, so changing prompt language or editing prompt files requires rebuilding cache.
+
 ## Quick Checks
 
 Compile the Python files:
@@ -128,6 +140,7 @@ Run a single-sample preprocessing smoke test:
 ./.venv/bin/python run_train.py smoke-test \
   --split train \
   --index 0 \
+  --prompt-lang en \
   --max-frames 4 \
   --max-audio-seconds 4 \
   --image-width 256
@@ -149,6 +162,8 @@ Training directly from media is slow because each step must decode video/audio a
 ```bash
 ./.venv/bin/python run_train.py build-cache \
   --cache-dir outputs/asd_ds_processor_cache \
+  --prompt-lang en \
+  --workers 8 \
   --frame-fps 1.0 \
   --max-frames 16 \
   --max-audio-seconds 30 \
@@ -158,6 +173,8 @@ Training directly from media is slow because each step must decode video/audio a
 ```
 
 This writes processor-ready tensors under `outputs/asd_ds_processor_cache/`.
+
+`--workers` controls parallel CPU cache builders. Use `--workers 8` for faster rebuilds on this workstation; lower it if CPU, RAM, or disk I/O becomes saturated.
 
 Cache contains:
 
@@ -170,7 +187,8 @@ If any preprocessing parameter changes, rebuild the cache:
 - `--max-frames`
 - `--max-audio-seconds`
 - `--image-width`
-- `--system-prompt`
+- `--prompt-lang`
+- files under `prompts/<lang>/`
 - `--model-dir`
 
 ## Full Training Command
@@ -185,6 +203,7 @@ Use physical CUDA GPUs `1,2,3`:
   --output-dir outputs/gemma4-asd-lora-r32-full-v1 \
   --cache-dir outputs/asd_ds_processor_cache \
   --cache-mode require \
+  --prompt-lang en \
   --run-name gemma4-asd-lora-r32-full-v1 \
   --wandb \
   --env-file .env \
@@ -219,6 +238,18 @@ Use physical CUDA GPUs `1,2,3`:
 Why `eval-steps 70`: the train split has 553 samples and the effective optimizer step count is roughly `553 / 8 = 69.1`, so this evaluates about once per epoch.
 
 Use validation during training. Use test only at the final evaluation stage.
+
+## Chinese Prompt Training
+
+The Chinese prompt training workflow is saved as:
+
+```bash
+./scripts/train_zh_v2.sh
+```
+
+It builds the matching `--prompt-lang zh` processor cache, then trains `outputs/gemma4-asd-lora-r32-remix010-zh-v2`.
+
+The script uses 8 cache workers by default. Override it with `CACHE_WORKERS=<n>` if needed.
 
 ## Outputs
 
@@ -297,6 +328,7 @@ Small one-step run without W&B:
   --cuda-devices 1,2,3 \
   --output-dir outputs/debug-train \
   --run-name debug-train \
+  --prompt-lang en \
   --no-wandb \
   --max-steps 1 \
   --max-train-samples 1 \
