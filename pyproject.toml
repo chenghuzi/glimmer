@@ -13,6 +13,7 @@ dependencies = [
     "httpx[socks]>=0.28.1",
     "ipykernel>=7.2.0",
     "click>=8.4.1",
+    "wandb>=0.27.0",
 ]
 
 [tool.uv.sources]
