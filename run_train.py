@@ -617,8 +617,8 @@ def export_model(
     litert_out_dir = (litert_out_dir or default_export_dir(adapter_dir, "litert")).expanduser()
 
     validate_existing_adapter_dir(adapter_dir)
-    prepare_output_dir(merged_model_dir, overwrite=overwrite)
-    prepare_output_dir(litert_out_dir, overwrite=overwrite)
+    should_merge = prepare_merged_output_dir(merged_model_dir, overwrite=overwrite)
+    prepare_litert_output_dir(litert_out_dir, overwrite=overwrite)
 
     click.echo("== Export setup ==")
     click.echo(f"model_dir: {model_dir}")
@@ -626,13 +626,17 @@ def export_model(
     click.echo(f"merged_model_dir: {merged_model_dir}")
     click.echo(f"litert_out_dir: {litert_out_dir}")
 
-    merge_lora_adapter(
-        model_dir=model_dir,
-        adapter_dir=adapter_dir,
-        merged_model_dir=merged_model_dir,
-        max_memory_per_gpu=max_memory_per_gpu,
-        bf16=bf16,
-    )
+    if should_merge:
+        merge_lora_adapter(
+            model_dir=model_dir,
+            adapter_dir=adapter_dir,
+            merged_model_dir=merged_model_dir,
+            max_memory_per_gpu=max_memory_per_gpu,
+            bf16=bf16,
+        )
+    else:
+        click.echo(f"Reusing existing merged HF model at {merged_model_dir}")
+
     litertlm_file = export_litert_lm(
         merged_model_dir=merged_model_dir,
         litert_out_dir=litert_out_dir,
@@ -666,17 +670,45 @@ def validate_existing_adapter_dir(adapter_dir: Path) -> None:
         raise click.ClickException(f"--adapter-dir is missing required file(s): {', '.join(missing)}")
 
 
-def prepare_output_dir(path: Path, *, overwrite: bool) -> None:
+def prepare_merged_output_dir(path: Path, *, overwrite: bool) -> bool:
     ensure_under_outputs(path)
+    if not path.exists():
+        return True
+    if not path.is_dir():
+        raise click.ClickException(f"Output path exists and is not a directory: {path}")
+    if not any(path.iterdir()):
+        return True
+    if is_merged_model_dir(path) and not overwrite:
+        return False
+    if not overwrite:
+        raise click.ClickException(f"Merged output directory already exists and is not reusable: {path}")
+    shutil.rmtree(path)
+    return True
+
+
+def prepare_litert_output_dir(path: Path, *, overwrite: bool) -> None:
+    ensure_under_outputs(path)
+    litertlm_file = path / "model.litertlm"
     if not path.exists():
         return
     if not path.is_dir():
         raise click.ClickException(f"Output path exists and is not a directory: {path}")
     if not any(path.iterdir()):
         return
-    if not overwrite:
-        raise click.ClickException(f"Output directory already exists and is not empty: {path}")
+    if litertlm_file.is_file() and not overwrite:
+        raise click.ClickException(f"LiteRT-LM package already exists: {litertlm_file}")
+    if not litertlm_file.is_file():
+        click.echo(f"Removing incomplete LiteRT output directory: {path}")
     shutil.rmtree(path)
+
+
+def is_merged_model_dir(path: Path) -> bool:
+    return (
+        (path / "config.json").is_file()
+        and (path / "model.safetensors").is_file()
+        and (path / "tokenizer.json").is_file()
+        and (path / "processor_config.json").is_file()
+    )
 
 
 def ensure_under_outputs(path: Path) -> None:
@@ -749,7 +781,7 @@ def export_litert_lm(
 
     click.echo("== Exporting LiteRT-LM package ==")
     click.echo(" ".join(command))
-    run_command(command)
+    run_command(command, env=litert_export_env())
 
     litertlm_file = litert_out_dir / "model.litertlm"
     if not litertlm_file.is_file():
@@ -758,7 +790,10 @@ def export_litert_lm(
 
 
 def inspect_litert_lm(litertlm_file: Path) -> None:
-    litert_lm_peek = find_tool("litert-lm-peek")
+    litert_lm_peek = find_optional_tool("litert-lm-peek")
+    if litert_lm_peek is None:
+        click.echo("Skipping inspection: litert-lm-peek was not found.")
+        return
     click.echo("== Inspecting LiteRT-LM package ==")
     run_command([litert_lm_peek, "--litertlm_file", str(litertlm_file)])
 
@@ -775,6 +810,20 @@ def smoke_test_litert_lm(litertlm_file: Path, *, backend: str) -> None:
             "--prompt=Return {\"features\":{\"example\":false}} and nothing else.",
         ]
     )
+
+
+def litert_export_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"):
+        env.pop(name, None)
+    return env
+
+
+def find_optional_tool(name: str) -> str | None:
+    try:
+        return find_tool(name)
+    except click.ClickException:
+        return None
 
 
 def find_tool(name: str) -> str:
@@ -1780,13 +1829,19 @@ def save_f1_figure(*, metrics: dict[str, Any], path: Path) -> None:
     image.save(path)
 
 
-def run_command(command: list[str], *, capture_stdout: bool = False) -> subprocess.CompletedProcess:
+def run_command(
+    command: list[str],
+    *,
+    capture_stdout: bool = False,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
             command,
             check=True,
             stdout=subprocess.PIPE if capture_stdout else None,
             stderr=subprocess.PIPE,
+            env=env,
         )
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else ""
