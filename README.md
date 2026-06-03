@@ -257,6 +257,25 @@ The W&B API key is expected in `.env` as:
 WANDB_API_KEY=...
 ```
 
+## LiteRT-LM iOS Export
+
+Working 4-bit LiteRT-LM export command for the latest trained adapter:
+
+```bash
+./.venv/bin/python run_train.py export \
+  --adapter-dir outputs/gemma4-asd-lora-r32-remix010-v1 \
+  --litert-out-dir outputs/gemma4-asd-lora-r32-remix010-v1-litert-w4 \
+  --quantization-recipe dynamic_wi4_afp32 \
+  --vision-encoder-quantization-recipe dynamic_wi8_afp32 \
+  --no-inspect
+```
+
+This writes:
+
+```text
+outputs/gemma4-asd-lora-r32-remix010-v1-litert-w4/model.litertlm
+```
+
 ## Debug Training
 
 Small one-step run without W&B:

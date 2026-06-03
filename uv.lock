@@ -669,6 +669,7 @@ dependencies = [
     { name = "datasets" },
     { name = "httpx", extra = ["socks"] },
     { name = "ipykernel" },
+    { name = "litert-lm-api" },
     { name = "litert-torch" },
     { name = "matplotlib" },
     { name = "numpy" },
@@ -690,6 +691,7 @@ requires-dist = [
     { name = "datasets" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.28.1" },
     { name = "ipykernel", specifier = ">=7.2.0" },
+    { name = "litert-lm-api", specifier = ">=0.13.1" },
     { name = "litert-torch", specifier = ">=0.9.1" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy" },
@@ -1109,6 +1111,17 @@ wheels = [
     { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/f6/8b/c09227e76b9eb5140cb664c39df440b0f36d075708cd4e7a29678f49c8c2/litert_converter-0.2.0-cp312-cp312-manylinux_2_27_x86_64.whl", hash = "sha256:6bfd6be7fcc7a0c5e4395bc6ee636524bddf82afe84ee3a77b21a27ee01913e5", size = 117552588 },
     { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/7e/6e/813bcd1b824b25de47f7b48da5a26b3af468e0ab06624981daa4b98e794d/litert_converter-0.2.0-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:5e7919f8165711d6eab02b643e188fb35066ef8db9f9b1a5ca1c29c32ee863c3", size = 100574117 },
     { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/00/96/d02f8b0feb7f1f4652f6300bee7a126085485aa9a2e9def2f283dc9bb244/litert_converter-0.2.0-cp313-cp313-manylinux_2_27_x86_64.whl", hash = "sha256:ec3f3a59c05d67f7d3c4b0c4793ce92e6005070727da1a79997d8ca7a4852fd1", size = 117550897 },
+]
+
+[[package]]
+name = "litert-lm-api"
+version = "0.13.1"
+source = { registry = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple" }
+wheels = [
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/58/ae/5d1e2862d14ad1b08bdbc3392574dde37b98a06f4efb5181d946766ec81c/litert_lm_api-0.13.1-py3-none-macosx_12_0_arm64.whl", hash = "sha256:4a1bb68dbf5a60af9ac5fe03331968a7b4e91779e721cb531e6b41e71f2a2d77", size = 20352139 },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/12/a7/c23db30dc19ad07a188eeeab48fd8d676554e8647dac6e9dbf62be0f82f1/litert_lm_api-0.13.1-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:4092c4f7ad75fb23d83bc5b00a9aa6896a19d75f148515efeef0d079ba22ef74", size = 42542393 },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/36/27/bb0c2e084d59938bc12f960db50e7e8e056337ed286f31468aaa39bc9d9a/litert_lm_api-0.13.1-py3-none-manylinux_2_27_x86_64.whl", hash = "sha256:b981d55e057be9664f30670d5c1faa6e738ad516a2617dbdac10dc6b5b409cca", size = 44865394 },
+    { url = "https://mirrors.tuna.tsinghua.edu.cn/pypi/web/packages/8e/0f/8edfe4800c95e230928529e5c6f305646ce3b7f497bad745a54a8127a52e/litert_lm_api-0.13.1-py3-none-win_amd64.whl", hash = "sha256:e2d6b03a9e38e17bebea9a74cc8a68553a05a5fee13a5b353be42209962ac9be", size = 26203707 },
 ]
 
 [[package]]

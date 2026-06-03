@@ -31,6 +31,7 @@ DEFAULT_CACHE_DIR = "outputs/asd_ds_processor_cache"
 DEFAULT_WANDB_PROJECT = "gemma4-asd-ft"
 DEFAULT_RUN_NAME = "gemma4-asd-lora-r32"
 DEFAULT_LITERT_TEMPLATE_OVERRIDE = "litert-community/gemma-4-E4B-it-litert-lm"
+DEFAULT_LITERT_QUANTIZATION_RECIPE = "dynamic_wi8_afp32"
 CACHE_VERSION = "gemma4_asd_ds_processor_cache_v1"
 CACHE_KINDS = ("supervised", "prompt")
 LANGUAGE_LORA_REGEX = (
@@ -583,6 +584,12 @@ def train(
 @click.option("--overwrite/--no-overwrite", default=False, show_default=True)
 @click.option("--externalize-embedder/--no-externalize-embedder", default=True, show_default=True)
 @click.option("--export-vision-encoder/--no-export-vision-encoder", default=True, show_default=True)
+@click.option("--quantization-recipe", default=DEFAULT_LITERT_QUANTIZATION_RECIPE, show_default=True)
+@click.option(
+    "--vision-encoder-quantization-recipe",
+    default=DEFAULT_LITERT_QUANTIZATION_RECIPE,
+    show_default=True,
+)
 @click.option(
     "--task",
     default="image_text_to_text",
@@ -604,6 +611,8 @@ def export_model(
     overwrite: bool,
     externalize_embedder: bool,
     export_vision_encoder: bool,
+    quantization_recipe: str,
+    vision_encoder_quantization_recipe: str,
     task: str,
     jinja_chat_template_override: str,
     inspect: bool,
@@ -625,6 +634,8 @@ def export_model(
     click.echo(f"adapter_dir: {adapter_dir}")
     click.echo(f"merged_model_dir: {merged_model_dir}")
     click.echo(f"litert_out_dir: {litert_out_dir}")
+    click.echo(f"quantization_recipe: {quantization_recipe}")
+    click.echo(f"vision_encoder_quantization_recipe: {vision_encoder_quantization_recipe}")
 
     if should_merge:
         merge_lora_adapter(
@@ -642,6 +653,8 @@ def export_model(
         litert_out_dir=litert_out_dir,
         externalize_embedder=externalize_embedder,
         export_vision_encoder=export_vision_encoder,
+        quantization_recipe=quantization_recipe,
+        vision_encoder_quantization_recipe=vision_encoder_quantization_recipe,
         task=task,
         jinja_chat_template_override=jinja_chat_template_override,
     )
@@ -760,6 +773,8 @@ def export_litert_lm(
     litert_out_dir: Path,
     externalize_embedder: bool,
     export_vision_encoder: bool,
+    quantization_recipe: str,
+    vision_encoder_quantization_recipe: str,
     task: str,
     jinja_chat_template_override: str,
 ) -> Path:
@@ -772,10 +787,16 @@ def export_litert_lm(
     ]
     if externalize_embedder:
         command.append("--externalize_embedder")
+    if quantization_recipe.strip():
+        command.append(f"--quantization_recipe={quantization_recipe.strip()}")
     if task.strip():
         command.append(f"--task={task.strip()}")
     if export_vision_encoder:
         command.append("--export_vision_encoder")
+    if vision_encoder_quantization_recipe.strip():
+        command.append(
+            f"--vision_encoder_quantization_recipe={vision_encoder_quantization_recipe.strip()}"
+        )
     if jinja_chat_template_override.strip():
         command.append(f"--jinja_chat_template_override={jinja_chat_template_override.strip()}")
 

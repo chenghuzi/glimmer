@@ -17,6 +17,7 @@ dependencies = [
     "peft>=0.19.1",
     "matplotlib>=3.10.9",
     "litert-torch>=0.9.1",
+    "litert-lm-api>=0.13.1",
 ]
 
 [tool.uv.sources]
