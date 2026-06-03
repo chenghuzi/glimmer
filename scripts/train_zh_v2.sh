@@ -7,22 +7,31 @@ cd "$ROOT_DIR"
 RUN_NAME="gemma4-asd-lora-r32-remix010-zh-v2"
 CACHE_DIR="outputs/asd_ds_processor_cache"
 CACHE_WORKERS="${CACHE_WORKERS:-8}"
+SKIP_CACHE="${SKIP_CACHE:-0}"
+TRAIN_PHYSICAL_CUDA_DEVICES="${TRAIN_PHYSICAL_CUDA_DEVICES:-2,3}"
+TRAIN_CUDA_DEVICES="${TRAIN_CUDA_DEVICES:-0,1}"
 
-./.venv/bin/python run_train.py build-cache \
-  --model-dir /home/huzi/Downloads/gemma-4-E4B-it \
-  --data-root data/raw/ASD-DS \
-  --cache-dir "$CACHE_DIR" \
-  --prompt-lang zh \
-  --workers "$CACHE_WORKERS" \
-  --frame-fps 1.0 \
-  --max-frames 16 \
-  --max-audio-seconds 30 \
-  --image-width 512 \
-  --cache-kind supervised \
-  --cache-kind prompt
+if [[ "$SKIP_CACHE" == "1" ]]; then
+  echo "Skipping cache build because SKIP_CACHE=1"
+else
+  ./.venv/bin/python run_train.py build-cache \
+    --model-dir /home/huzi/Downloads/gemma-4-E4B-it \
+    --data-root data/raw/ASD-DS \
+    --cache-dir "$CACHE_DIR" \
+    --prompt-lang zh \
+    --workers "$CACHE_WORKERS" \
+    --frame-fps 1.0 \
+    --max-frames 16 \
+    --max-audio-seconds 30 \
+    --image-width 512 \
+    --cache-kind supervised \
+    --cache-kind prompt
+fi
 
+CUDA_VISIBLE_DEVICES="$TRAIN_PHYSICAL_CUDA_DEVICES" \
+PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}" \
 ./.venv/bin/python run_train.py train \
-  --cuda-devices 1,2,3 \
+  --cuda-devices "$TRAIN_CUDA_DEVICES" \
   --model-dir /home/huzi/Downloads/gemma-4-E4B-it \
   --data-root data/raw/ASD-DS \
   --output-dir "outputs/$RUN_NAME" \
