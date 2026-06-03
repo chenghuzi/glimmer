@@ -85,6 +85,19 @@ The LoRA defaults are:
 - BF16 base model
 - gradient checkpointing enabled
 
+Important audio-export note: the LoRA adapter does not modify the Gemma 4
+audio encoder or audio adapter. The target-module regex is limited to
+`language_model` projections:
+
+```text
+.*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$
+```
+
+Therefore audio encoder weights remain base Gemma 4. If building an
+audio-capable LiteRT-LM package, grafting official base Gemma 4 audio sections
+into the fine-tuned package is technically plausible, but the resulting package
+must still be evaluated before trusting behavior-label metrics.
+
 Current collator supports batch size 1 only. Keep `per-device-train-batch-size=1` and scale effective batch size with `gradient-accumulation-steps`.
 
 ## Cache Workflow
