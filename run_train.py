@@ -10,9 +10,10 @@ from typing import Any
 
 import click
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+from transformers.trainer_callback import TrainerCallback
 
-from asd_ds_dataset import FEATURE_IDS, load_asd_ds
+from asd_ds_dataset import FEATURE_ID_TO_COLUMN, FEATURE_IDS, load_asd_ds
 
 
 DEFAULT_DATA_ROOT = "data/raw/ASD-DS"
@@ -158,13 +159,14 @@ def smoke_test(
 @click.option("--output-dir", default=DEFAULT_OUTPUT_DIR, show_default=True, type=click.Path(path_type=Path))
 @click.option("--run-name", default=DEFAULT_RUN_NAME, show_default=True)
 @click.option("--wandb-project", default=DEFAULT_WANDB_PROJECT, show_default=True)
-@click.option("--wandb-entity", default=None)
+@click.option("--wandb-entity", default="chenghuzi")
 @click.option("--env-file", default=".env", show_default=True, type=click.Path(path_type=Path))
 @click.option("--wandb/--no-wandb", default=True, show_default=True)
 @click.option("--num-train-epochs", default=1.0, show_default=True, type=click.FloatRange(min=0))
 @click.option("--max-steps", default=-1, show_default=True, type=int)
 @click.option("--max-train-samples", default=None, type=click.IntRange(min=1))
 @click.option("--max-eval-samples", default=None, type=click.IntRange(min=1))
+@click.option("--max-test-samples", default=None, type=click.IntRange(min=1))
 @click.option("--learning-rate", default=1e-4, show_default=True, type=float)
 @click.option("--warmup-ratio", default=0.03, show_default=True, type=click.FloatRange(min=0, max=1))
 @click.option("--weight-decay", default=0.0, show_default=True, type=click.FloatRange(min=0))
@@ -189,6 +191,8 @@ def smoke_test(
     help="'language', 'all-linear', or comma-separated PEFT target module names/regex.",
 )
 @click.option("--max-memory-per-gpu", default="22GiB", show_default=True)
+@click.option("--prediction-max-new-tokens", default=256, show_default=True, type=click.IntRange(min=16))
+@click.option("--generated-metrics/--no-generated-metrics", default=True, show_default=True)
 @click.option("--bf16/--no-bf16", default=True, show_default=True)
 @click.option("--gradient-checkpointing/--no-gradient-checkpointing", default=True, show_default=True)
 @click.option("--resume-from-checkpoint", default=None, type=click.Path(path_type=Path))
@@ -207,6 +211,7 @@ def train(
     max_steps: int,
     max_train_samples: int | None,
     max_eval_samples: int | None,
+    max_test_samples: int | None,
     learning_rate: float,
     warmup_ratio: float,
     weight_decay: float,
@@ -226,6 +231,8 @@ def train(
     lora_dropout: float,
     target_modules: str,
     max_memory_per_gpu: str,
+    prediction_max_new_tokens: int,
+    generated_metrics: bool,
     bf16: bool,
     gradient_checkpointing: bool,
     resume_from_checkpoint: Path | None,
@@ -265,10 +272,13 @@ def train(
     dataset = load_asd_ds(data_root)
     train_dataset = dataset["train"]
     eval_dataset = dataset["validation"]
+    test_dataset = dataset["test"]
     if max_train_samples is not None:
         train_dataset = train_dataset.select(range(min(max_train_samples, len(train_dataset))))
     if max_eval_samples is not None:
         eval_dataset = eval_dataset.select(range(min(max_eval_samples, len(eval_dataset))))
+    if max_test_samples is not None:
+        test_dataset = test_dataset.select(range(min(max_test_samples, len(test_dataset))))
 
     processor = AutoProcessor.from_pretrained(model_dir, local_files_only=True)
     collator = Gemma4ASDDSCollator(
@@ -331,6 +341,28 @@ def train(
         optim="adamw_torch",
     )
 
+    metrics_evaluator = None
+    callbacks = []
+    if generated_metrics:
+        metrics_evaluator = GeneratedMetricsEvaluator(
+            processor=processor,
+            ffmpeg=ffmpeg,
+            frame_fps=frame_fps,
+            max_frames=max_frames,
+            max_audio_seconds=max_audio_seconds,
+            image_width=image_width,
+            system_prompt=system_prompt,
+            output_dir=output_dir / "generated_metrics",
+            max_new_tokens=prediction_max_new_tokens,
+            wandb_enabled=wandb,
+        )
+        callbacks.append(
+            GeneratedMetricsCallback(
+                evaluator=metrics_evaluator,
+                eval_dataset=eval_dataset,
+            )
+        )
+
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -338,6 +370,7 @@ def train(
         eval_dataset=eval_dataset,
         data_collator=collator,
         processing_class=processor,
+        callbacks=callbacks,
     )
 
     click.echo("== Starting training ==")
@@ -346,6 +379,24 @@ def train(
     trainer.save_model(str(output_dir))
     processor.save_pretrained(output_dir)
     click.echo(f"Saved training artifacts to {output_dir}")
+
+    if metrics_evaluator is not None:
+        click.echo("== Running final generated validation metrics ==")
+        metrics_evaluator.evaluate(
+            model=trainer.model,
+            dataset=eval_dataset,
+            split_name="validation_final",
+            step=int(trainer.state.global_step),
+            epoch=trainer.state.epoch,
+        )
+        click.echo("== Running final generated test metrics ==")
+        metrics_evaluator.evaluate(
+            model=trainer.model,
+            dataset=test_dataset,
+            split_name="test_final",
+            step=int(trainer.state.global_step),
+            epoch=trainer.state.epoch,
+        )
 
 
 def find_tool(name: str) -> str:
@@ -444,6 +495,195 @@ class Gemma4ASDDSCollator:
             prompt_len=prompt_inputs["input_ids"].shape[-1],
         )
         return dict(full_inputs)
+
+
+class GeneratedMetricsCallback(TrainerCallback):
+    """Run generation-based validation metrics after Trainer loss evaluation."""
+
+    def __init__(self, *, evaluator: "GeneratedMetricsEvaluator", eval_dataset: Any) -> None:
+        self.evaluator = evaluator
+        self.eval_dataset = eval_dataset
+        self._seen_steps: set[int] = set()
+
+    def on_evaluate(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
+        if not state.is_world_process_zero:
+            return control
+
+        step = int(state.global_step)
+        if step in self._seen_steps:
+            return control
+        self._seen_steps.add(step)
+
+        model = kwargs.get("model")
+        if model is None:
+            return control
+
+        self.evaluator.evaluate(
+            model=model,
+            dataset=self.eval_dataset,
+            split_name="validation",
+            step=step,
+            epoch=state.epoch,
+        )
+        return control
+
+
+class GeneratedMetricsEvaluator:
+    """Generate JSON labels and save per-label F1 metrics, plots, and predictions."""
+
+    def __init__(
+        self,
+        *,
+        processor: Any,
+        ffmpeg: str,
+        frame_fps: float,
+        max_frames: int,
+        max_audio_seconds: float,
+        image_width: int,
+        system_prompt: str,
+        output_dir: Path,
+        max_new_tokens: int,
+        wandb_enabled: bool,
+    ) -> None:
+        self.processor = processor
+        self.ffmpeg = ffmpeg
+        self.frame_fps = frame_fps
+        self.max_frames = max_frames
+        self.max_audio_seconds = max_audio_seconds
+        self.image_width = image_width
+        self.system_prompt = system_prompt
+        self.output_dir = output_dir
+        self.max_new_tokens = max_new_tokens
+        self.wandb_enabled = wandb_enabled
+
+    def evaluate(
+        self,
+        *,
+        model: Any,
+        dataset: Any,
+        split_name: str,
+        step: int,
+        epoch: float | None,
+    ) -> dict[str, Any]:
+        import torch
+
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        safe_epoch = "none" if epoch is None else f"{epoch:.4f}".replace(".", "_")
+        run_id = f"{split_name}_step_{step:06d}_epoch_{safe_epoch}"
+        predictions_path = self.output_dir / f"{run_id}_predictions.jsonl"
+        metrics_path = self.output_dir / f"{run_id}_metrics.json"
+        figure_path = self.output_dir / f"{run_id}_f1.png"
+
+        click.echo(f"[generated-metrics] {split_name}: {len(dataset)} samples at step {step}")
+        was_training = model.training
+        model.eval()
+        device = infer_model_input_device(model)
+
+        y_true: list[list[int]] = []
+        y_pred: list[list[int]] = []
+        records = []
+        with torch.inference_mode(), predictions_path.open("w") as handle:
+            for index, row in enumerate(dataset):
+                if index and index % 10 == 0:
+                    click.echo(f"[generated-metrics] {split_name}: {index}/{len(dataset)}")
+
+                prompt_inputs = build_prompt_inputs(
+                    processor=self.processor,
+                    ffmpeg=self.ffmpeg,
+                    row=row,
+                    frame_fps=self.frame_fps,
+                    max_frames=self.max_frames,
+                    max_audio_seconds=self.max_audio_seconds,
+                    image_width=self.image_width,
+                    system_prompt=self.system_prompt,
+                )
+                model_inputs = move_tensor_dict(prompt_inputs, device=device)
+                generated_ids = model.generate(
+                    **model_inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    do_sample=False,
+                    pad_token_id=self.processor.tokenizer.eos_token_id,
+                )
+                prompt_len = int(prompt_inputs["input_ids"].shape[-1])
+                generated_text = self.processor.tokenizer.decode(
+                    generated_ids[0][prompt_len:],
+                    skip_special_tokens=True,
+                ).strip()
+                parsed = parse_generated_label_vector(generated_text)
+                truth = [int(value) for value in row["label_vector"]]
+                y_true.append(truth)
+                y_pred.append(parsed["label_vector"])
+
+                record = {
+                    "split": split_name,
+                    "step": step,
+                    "epoch": epoch,
+                    "index": index,
+                    "video_id": row["video_id"],
+                    "target_label_vector": truth,
+                    "predicted_label_vector": parsed["label_vector"],
+                    "target_json": row["target_json"],
+                    "raw_prediction": generated_text,
+                    "parse_ok": parsed["parse_ok"],
+                    "parse_error": parsed["parse_error"],
+                }
+                records.append(record)
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        if was_training:
+            model.train()
+
+        metrics = compute_multilabel_metrics(
+            y_true=np.asarray(y_true, dtype=np.int64),
+            y_pred=np.asarray(y_pred, dtype=np.int64),
+            parse_ok=[bool(record["parse_ok"]) for record in records],
+            split_name=split_name,
+            step=step,
+            epoch=epoch,
+        )
+        metrics["artifacts"] = {
+            "predictions_jsonl": str(predictions_path),
+            "metrics_json": str(metrics_path),
+            "f1_png": str(figure_path),
+        }
+        metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False) + "\n")
+        save_f1_figure(metrics=metrics, path=figure_path)
+        self.log_to_wandb(metrics=metrics, figure_path=figure_path, split_name=split_name, step=step)
+        click.echo(
+            "[generated-metrics] "
+            f"{split_name}: micro_f1={metrics['micro']['f1']:.4f} "
+            f"macro_f1={metrics['macro']['f1']:.4f} "
+            f"exact_match={metrics['exact_match']:.4f} "
+            f"parse_rate={metrics['parse_rate']:.4f}"
+        )
+        click.echo(f"[generated-metrics] saved: {metrics_path}")
+        return metrics
+
+    def log_to_wandb(self, *, metrics: dict[str, Any], figure_path: Path, split_name: str, step: int) -> None:
+        if not self.wandb_enabled:
+            return
+
+        try:
+            import wandb
+        except ImportError:
+            return
+
+        if wandb.run is None:
+            return
+
+        payload: dict[str, Any] = {
+            f"generated/{split_name}/micro_f1": metrics["micro"]["f1"],
+            f"generated/{split_name}/macro_f1": metrics["macro"]["f1"],
+            f"generated/{split_name}/exact_match": metrics["exact_match"],
+            f"generated/{split_name}/hamming_accuracy": metrics["hamming_accuracy"],
+            f"generated/{split_name}/parse_rate": metrics["parse_rate"],
+            f"generated/{split_name}/f1_plot": wandb.Image(str(figure_path)),
+        }
+        for feature_id, values in metrics["per_label"].items():
+            payload[f"generated/{split_name}/f1/{feature_id}"] = values["f1"]
+            payload[f"generated/{split_name}/precision/{feature_id}"] = values["precision"]
+            payload[f"generated/{split_name}/recall/{feature_id}"] = values["recall"]
+        wandb.log(payload, step=step)
 
 
 def configure_runtime(cuda_devices: str) -> None:
@@ -593,6 +833,291 @@ def load_audio_mono_16k(*, ffmpeg: str, audio_path: Path, max_seconds: float) ->
     if audio.size == 0:
         raise click.ClickException(f"ffmpeg produced no audio for {audio_path}")
     return audio
+
+
+def build_prompt_inputs(
+    *,
+    processor: Any,
+    ffmpeg: str,
+    row: dict,
+    frame_fps: float,
+    max_frames: int,
+    max_audio_seconds: float,
+    image_width: int,
+    system_prompt: str,
+) -> dict[str, Any]:
+    from transformers.video_utils import VideoMetadata
+
+    frames = load_video_frames(
+        ffmpeg=ffmpeg,
+        video_path=Path(row["video_path"]),
+        fps=frame_fps,
+        max_frames=max_frames,
+        image_width=image_width,
+        duration_sec=float(row["duration_sec"]),
+    )
+    audio = load_audio_mono_16k(
+        ffmpeg=ffmpeg,
+        audio_path=Path(row["audio_path"]),
+        max_seconds=min(float(row["duration_sec"]), max_audio_seconds),
+    )
+    metadata = VideoMetadata(
+        total_num_frames=len(frames),
+        fps=sampled_frame_fps(len(frames), float(row["duration_sec"])),
+        duration=float(row["duration_sec"]),
+        frames_indices=list(range(len(frames))),
+    )
+    prompt_text = build_chat_text(
+        processor,
+        row,
+        system_prompt=system_prompt,
+        include_answer=False,
+    )
+    return processor(
+        text=[prompt_text],
+        videos=[frames],
+        audio=[audio],
+        return_tensors="pt",
+        return_mm_token_type_ids=True,
+        videos_kwargs={"video_metadata": [metadata], "do_sample_frames": False},
+        audio_kwargs={"sampling_rate": 16000},
+    )
+
+
+def move_tensor_dict(batch: dict[str, Any], *, device: Any) -> dict[str, Any]:
+    import torch
+
+    moved = {}
+    for key, value in batch.items():
+        if torch.is_tensor(value):
+            moved[key] = value.to(device)
+        else:
+            moved[key] = value
+    return moved
+
+
+def infer_model_input_device(model: Any) -> Any:
+    import torch
+
+    for candidate in (model, getattr(model, "base_model", None), getattr(getattr(model, "base_model", None), "model", None)):
+        device_map = getattr(candidate, "hf_device_map", None)
+        if not device_map:
+            continue
+
+        preferred_keys = (
+            "",
+            "base_model.model.language_model.model.embed_tokens",
+            "language_model.model.embed_tokens",
+            "model.embed_tokens",
+        )
+        for key in preferred_keys:
+            if key in device_map:
+                return normalize_torch_device(device_map[key])
+
+        for value in device_map.values():
+            device = normalize_torch_device(value)
+            if device.type == "cuda":
+                return device
+
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+
+def normalize_torch_device(value: Any) -> Any:
+    import torch
+
+    if isinstance(value, torch.device):
+        return value
+    if isinstance(value, int):
+        return torch.device(f"cuda:{value}")
+    if isinstance(value, str):
+        if value == "disk":
+            return torch.device("cpu")
+        return torch.device(value)
+    return torch.device("cpu")
+
+
+def parse_generated_label_vector(text: str) -> dict[str, Any]:
+    try:
+        payload = extract_json_payload(text)
+        if "features" in payload and isinstance(payload["features"], dict):
+            features = payload["features"]
+        elif "labels" in payload and isinstance(payload["labels"], dict):
+            features = payload["labels"]
+        else:
+            features = payload
+
+        label_vector = [coerce_label_value(features[feature_id]) for feature_id in FEATURE_IDS]
+        return {
+            "parse_ok": True,
+            "parse_error": None,
+            "label_vector": label_vector,
+        }
+    except Exception as exc:
+        return {
+            "parse_ok": False,
+            "parse_error": str(exc),
+            "label_vector": [0 for _ in FEATURE_IDS],
+        }
+
+
+def extract_json_payload(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`").strip()
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("No JSON object found in model output")
+
+    payload = json.loads(cleaned[start : end + 1])
+    if not isinstance(payload, dict):
+        raise ValueError("Generated JSON root must be an object")
+    return payload
+
+
+def coerce_label_value(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return int(value != 0)
+    if isinstance(value, float):
+        return int(value != 0.0)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "1", "positive", "present"}:
+            return 1
+        if normalized in {"false", "no", "0", "negative", "absent"}:
+            return 0
+    raise ValueError(f"Unsupported label value: {value!r}")
+
+
+def compute_multilabel_metrics(
+    *,
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    parse_ok: list[bool],
+    split_name: str,
+    step: int,
+    epoch: float | None,
+) -> dict[str, Any]:
+    if y_true.shape != y_pred.shape:
+        raise ValueError(f"Prediction shape mismatch: {y_true.shape} != {y_pred.shape}")
+    if y_true.ndim != 2 or y_true.shape[1] != len(FEATURE_IDS):
+        raise ValueError(f"Expected label matrix with {len(FEATURE_IDS)} columns, got {y_true.shape}")
+
+    tp = ((y_true == 1) & (y_pred == 1)).sum(axis=0)
+    fp = ((y_true == 0) & (y_pred == 1)).sum(axis=0)
+    fn = ((y_true == 1) & (y_pred == 0)).sum(axis=0)
+    tn = ((y_true == 0) & (y_pred == 0)).sum(axis=0)
+    support = y_true.sum(axis=0)
+
+    per_label = {}
+    for index, feature_id in enumerate(FEATURE_IDS):
+        precision = safe_divide(tp[index], tp[index] + fp[index])
+        recall = safe_divide(tp[index], tp[index] + fn[index])
+        f1 = f1_from_precision_recall(precision, recall)
+        per_label[feature_id] = {
+            "name": FEATURE_ID_TO_COLUMN[feature_id],
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": int(support[index]),
+            "tp": int(tp[index]),
+            "fp": int(fp[index]),
+            "fn": int(fn[index]),
+            "tn": int(tn[index]),
+        }
+
+    micro_precision = safe_divide(tp.sum(), tp.sum() + fp.sum())
+    micro_recall = safe_divide(tp.sum(), tp.sum() + fn.sum())
+    macro_precision = float(np.mean([values["precision"] for values in per_label.values()]))
+    macro_recall = float(np.mean([values["recall"] for values in per_label.values()]))
+    macro_f1 = float(np.mean([values["f1"] for values in per_label.values()]))
+
+    return {
+        "split": split_name,
+        "step": step,
+        "epoch": epoch,
+        "num_samples": int(y_true.shape[0]),
+        "num_labels": len(FEATURE_IDS),
+        "parse_rate": float(np.mean(np.asarray(parse_ok, dtype=np.float32))) if parse_ok else 0.0,
+        "exact_match": float(np.mean(np.all(y_true == y_pred, axis=1))) if y_true.shape[0] else 0.0,
+        "hamming_accuracy": float(np.mean(y_true == y_pred)) if y_true.size else 0.0,
+        "micro": {
+            "precision": micro_precision,
+            "recall": micro_recall,
+            "f1": f1_from_precision_recall(micro_precision, micro_recall),
+        },
+        "macro": {
+            "precision": macro_precision,
+            "recall": macro_recall,
+            "f1": macro_f1,
+        },
+        "per_label": per_label,
+    }
+
+
+def safe_divide(numerator: Any, denominator: Any) -> float:
+    denominator = float(denominator)
+    if denominator == 0.0:
+        return 0.0
+    return float(numerator) / denominator
+
+
+def f1_from_precision_recall(precision: float, recall: float) -> float:
+    if precision + recall == 0.0:
+        return 0.0
+    return 2.0 * precision * recall / (precision + recall)
+
+
+def save_f1_figure(*, metrics: dict[str, Any], path: Path) -> None:
+    width = 1400
+    row_height = 58
+    top = 130
+    bottom = 50
+    height = top + row_height * len(FEATURE_IDS) + bottom
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+
+    title = (
+        f"{metrics['split']} step={metrics['step']} "
+        f"micro-F1={metrics['micro']['f1']:.3f} "
+        f"macro-F1={metrics['macro']['f1']:.3f} "
+        f"exact={metrics['exact_match']:.3f}"
+    )
+    draw.text((40, 32), "ASD-DS Generated Label F1 by Behavior Dimension", fill=(20, 20, 20), font=font)
+    draw.text((40, 62), title, fill=(60, 60, 60), font=font)
+    draw.text((40, 92), f"parse_rate={metrics['parse_rate']:.3f} samples={metrics['num_samples']}", fill=(60, 60, 60), font=font)
+
+    label_x = 40
+    bar_x = 470
+    bar_width = 620
+    value_x = bar_x + bar_width + 28
+    for index, feature_id in enumerate(FEATURE_IDS):
+        values = metrics["per_label"][feature_id]
+        y = top + index * row_height
+        f1 = float(values["f1"])
+        bar_fill = (43, 113, 181) if f1 >= 0.5 else (190, 72, 72)
+        label = f"{feature_id} {values['name']}"
+        summary = (
+            f"F1 {f1:.3f}  P {values['precision']:.3f}  "
+            f"R {values['recall']:.3f}  support {values['support']}"
+        )
+        draw.text((label_x, y + 8), label, fill=(30, 30, 30), font=font)
+        draw.rectangle((bar_x, y + 4, bar_x + bar_width, y + 30), outline=(170, 170, 170), width=1)
+        draw.rectangle((bar_x, y + 4, bar_x + int(bar_width * f1), y + 30), fill=bar_fill)
+        draw.text((value_x, y + 8), summary, fill=(30, 30, 30), font=font)
+        draw.line((bar_x, y + 42, value_x + 260, y + 42), fill=(235, 235, 235), width=1)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
 
 
 def run_command(command: list[str], *, capture_stdout: bool = False) -> subprocess.CompletedProcess:
