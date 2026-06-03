@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 import hashlib
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -19,12 +21,9 @@ from asd_ds_dataset import FEATURE_ID_TO_COLUMN, FEATURE_IDS, load_asd_ds
 
 DEFAULT_DATA_ROOT = "data/raw/ASD-DS"
 DEFAULT_MODEL_DIR = "/home/huzi/Downloads/gemma-4-E4B-it"
-DEFAULT_SYSTEM_PROMPT = (
-    "You are a behavioral screening assistant. Inspect the provided video and audio. "
-    "Return only the structured behavior label JSON with canonical feature IDs B01 through B10. "
-    "This is screening support, not a medical diagnosis."
-)
-USER_INSTRUCTION = "Return the behavior label report as strict JSON. Do not add explanation."
+PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
+DEFAULT_PROMPT_LANG = "en"
+PROMPT_LANGS = ("en", "zh")
 BREW_BIN = Path("/home/linuxbrew/.linuxbrew/bin")
 DEFAULT_OUTPUT_DIR = "outputs/gemma4-asd-lora-r32"
 DEFAULT_CACHE_DIR = "outputs/asd_ds_processor_cache"
@@ -37,6 +36,43 @@ CACHE_KINDS = ("supervised", "prompt")
 LANGUAGE_LORA_REGEX = (
     r".*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
 )
+_CACHE_WORKER_STATE: dict[str, Any] = {}
+
+
+@dataclass(frozen=True)
+class PromptBundle:
+    lang: str
+    system: str
+    user: str
+    system_path: Path
+    user_path: Path
+
+
+def load_prompt_bundle(prompt_lang: str) -> PromptBundle:
+    lang = prompt_lang.strip().lower()
+    prompt_dir = PROMPTS_DIR / lang
+    system_path = prompt_dir / "system.md"
+    user_path = prompt_dir / "user.md"
+    missing = [str(path) for path in (system_path, user_path) if not path.is_file()]
+    if missing:
+        raise click.ClickException(
+            f"Missing prompt file(s) for --prompt-lang {lang}: {', '.join(missing)}"
+        )
+
+    system_prompt = system_path.read_text(encoding="utf-8").strip()
+    user_prompt = user_path.read_text(encoding="utf-8").strip()
+    if not system_prompt:
+        raise click.ClickException(f"Prompt file is empty: {system_path}")
+    if not user_prompt:
+        raise click.ClickException(f"Prompt file is empty: {user_path}")
+
+    return PromptBundle(
+        lang=lang,
+        system=system_prompt,
+        user=user_prompt,
+        system_path=system_path,
+        user_path=user_path,
+    )
 
 
 @click.group()
@@ -53,7 +89,7 @@ def cli() -> None:
 @click.option("--max-frames", default=8, show_default=True, type=click.IntRange(min=1))
 @click.option("--max-audio-seconds", default=30.0, show_default=True, type=click.FloatRange(min=0.1))
 @click.option("--image-width", default=512, show_default=True, type=click.IntRange(min=64))
-@click.option("--system-prompt", default=DEFAULT_SYSTEM_PROMPT, show_default=False)
+@click.option("--prompt-lang", default=DEFAULT_PROMPT_LANG, show_default=True, type=click.Choice(PROMPT_LANGS))
 def smoke_test(
     data_root: Path,
     model_dir: Path,
@@ -63,7 +99,7 @@ def smoke_test(
     max_frames: int,
     max_audio_seconds: float,
     image_width: int,
-    system_prompt: str,
+    prompt_lang: str,
 ) -> None:
     """Load one sample, preprocess media, and build masked training labels."""
     from transformers import AutoProcessor
@@ -74,6 +110,8 @@ def smoke_test(
     click.echo(f"data_root: {data_root}")
     click.echo(f"model_dir:  {model_dir}")
     click.echo(f"ffmpeg:     {ffmpeg}")
+    prompts = load_prompt_bundle(prompt_lang)
+    click.echo(f"prompt_lang: {prompts.lang}")
 
     dataset = load_asd_ds(data_root, splits=(split,))[split]
     if row_index >= len(dataset):
@@ -103,8 +141,8 @@ def smoke_test(
     click.echo(f"audio_min_max: {audio.min():.4f}, {audio.max():.4f}")
 
     processor = AutoProcessor.from_pretrained(model_dir, local_files_only=True)
-    prompt_text = build_chat_text(processor, row, system_prompt=system_prompt, include_answer=False)
-    full_text = build_chat_text(processor, row, system_prompt=system_prompt, include_answer=True)
+    prompt_text = build_chat_text(processor, row, prompts=prompts, include_answer=False)
+    full_text = build_chat_text(processor, row, prompts=prompts, include_answer=True)
     metadata = VideoMetadata(
         total_num_frames=len(frames),
         fps=frame_fps,
@@ -184,7 +222,14 @@ def smoke_test(
 @click.option("--max-audio-seconds", default=30.0, show_default=True, type=click.FloatRange(min=0.1))
 @click.option("--image-width", default=512, show_default=True, type=click.IntRange(min=64))
 @click.option("--overwrite/--no-overwrite", default=False, show_default=True)
-@click.option("--system-prompt", default=DEFAULT_SYSTEM_PROMPT, show_default=False)
+@click.option("--prompt-lang", default=DEFAULT_PROMPT_LANG, show_default=True, type=click.Choice(PROMPT_LANGS))
+@click.option(
+    "--workers",
+    default=1,
+    show_default=True,
+    type=click.IntRange(min=1),
+    help="Parallel CPU worker processes for processor-cache building.",
+)
 def build_cache(
     data_root: Path,
     model_dir: Path,
@@ -197,13 +242,14 @@ def build_cache(
     max_audio_seconds: float,
     image_width: int,
     overwrite: bool,
-    system_prompt: str,
+    prompt_lang: str,
+    workers: int,
 ) -> None:
     """Precompute processor batches so training does not run ffmpeg/processor per step."""
     from transformers import AutoProcessor
 
     ffmpeg = find_tool("ffmpeg")
-    processor = AutoProcessor.from_pretrained(model_dir, local_files_only=True)
+    prompts = load_prompt_bundle(prompt_lang)
     cache_store = ProcessorCache(
         cache_dir=cache_dir,
         config=build_cache_config(
@@ -212,7 +258,7 @@ def build_cache(
             max_frames=max_frames,
             max_audio_seconds=max_audio_seconds,
             image_width=image_width,
-            system_prompt=system_prompt,
+            prompts=prompts,
         ),
         mode="read-write",
     )
@@ -223,10 +269,13 @@ def build_cache(
     click.echo(f"model_dir: {model_dir}")
     click.echo(f"cache_root: {cache_store.root}")
     click.echo(f"ffmpeg: {ffmpeg}")
+    click.echo(f"prompt_lang: {prompts.lang}")
+    click.echo(f"workers: {workers}")
     click.echo(f"splits: {', '.join(splits)}")
     click.echo(f"kinds: {', '.join(cache_kinds)}")
 
     dataset = load_asd_ds(data_root, splits=splits)
+    rows: list[dict] = []
     total_written = 0
     total_existing = 0
     for split in splits:
@@ -235,34 +284,59 @@ def build_cache(
             split_dataset = split_dataset.select(range(min(max_samples, len(split_dataset))))
 
         click.echo(f"== {split}: {len(split_dataset)} samples ==")
-        for index, row in enumerate(split_dataset):
-            if index and index % 25 == 0:
+        rows.extend(dict(row) for row in split_dataset)
+
+    if workers == 1:
+        processor = AutoProcessor.from_pretrained(model_dir, local_files_only=True)
+        for index, row in enumerate(rows, start=1):
+            if index > 1 and (index - 1) % 25 == 0:
                 click.echo(
-                    f"[cache] {split}: {index}/{len(split_dataset)} "
+                    f"[cache] rows: {index - 1}/{len(rows)} "
                     f"written={total_written} existing={total_existing}"
                 )
 
-            for kind in cache_kinds:
-                written = cache_store.build_or_refresh(
-                    kind=kind,
-                    row=row,
-                    overwrite=overwrite,
-                    builder=lambda kind=kind, row=row: build_cached_kind(
-                        kind=kind,
-                        processor=processor,
-                        ffmpeg=ffmpeg,
-                        row=row,
-                        frame_fps=frame_fps,
-                        max_frames=max_frames,
-                        max_audio_seconds=max_audio_seconds,
-                        image_width=image_width,
-                        system_prompt=system_prompt,
-                    ),
-                )
-                if written:
-                    total_written += 1
-                else:
-                    total_existing += 1
+            counts = build_cache_row(
+                cache_store=cache_store,
+                processor=processor,
+                ffmpeg=ffmpeg,
+                row=row,
+                cache_kinds=cache_kinds,
+                overwrite=overwrite,
+                frame_fps=frame_fps,
+                max_frames=max_frames,
+                max_audio_seconds=max_audio_seconds,
+                image_width=image_width,
+                prompts=prompts,
+            )
+            total_written += counts["written"]
+            total_existing += counts["existing"]
+    else:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=init_cache_worker,
+            initargs=(
+                str(model_dir),
+                str(cache_dir),
+                cache_store.config,
+                ffmpeg,
+                tuple(cache_kinds),
+                frame_fps,
+                max_frames,
+                max_audio_seconds,
+                image_width,
+                prompts,
+            ),
+        ) as executor:
+            futures = [executor.submit(build_cache_row_worker, row, overwrite) for row in rows]
+            for index, future in enumerate(as_completed(futures), start=1):
+                counts = future.result()
+                total_written += counts["written"]
+                total_existing += counts["existing"]
+                if index % 25 == 0 or index == len(rows):
+                    click.echo(
+                        f"[cache] rows: {index}/{len(rows)} "
+                        f"written={total_written} existing={total_existing}"
+                    )
 
     click.echo(
         "CACHE BUILD DONE "
@@ -283,6 +357,7 @@ def build_cache(
     type=click.Choice(["off", "read-write", "require"]),
     help="'require' fails on missing cache; 'read-write' builds missing entries lazily.",
 )
+@click.option("--prompt-lang", default=DEFAULT_PROMPT_LANG, show_default=True, type=click.Choice(PROMPT_LANGS))
 @click.option("--run-name", default=DEFAULT_RUN_NAME, show_default=True)
 @click.option("--wandb-project", default=DEFAULT_WANDB_PROJECT, show_default=True)
 @click.option("--wandb-entity", default="chenghuzi")
@@ -330,7 +405,6 @@ def build_cache(
 @click.option("--bf16/--no-bf16", default=True, show_default=True)
 @click.option("--gradient-checkpointing/--no-gradient-checkpointing", default=True, show_default=True)
 @click.option("--resume-from-checkpoint", default=None, type=click.Path(path_type=Path))
-@click.option("--system-prompt", default=DEFAULT_SYSTEM_PROMPT, show_default=False)
 def train(
     cuda_devices: str,
     data_root: Path,
@@ -338,6 +412,7 @@ def train(
     output_dir: Path,
     cache_dir: Path,
     cache_mode: str,
+    prompt_lang: str,
     run_name: str,
     wandb_project: str,
     wandb_entity: str | None,
@@ -375,12 +450,12 @@ def train(
     bf16: bool,
     gradient_checkpointing: bool,
     resume_from_checkpoint: Path | None,
-    system_prompt: str,
 ) -> None:
     """Fine-tune Gemma 4 E4B with BF16 LoRA on ASD-DS."""
     if per_device_train_batch_size != 1 or per_device_eval_batch_size != 1:
         raise click.ClickException("This first training collator supports batch size 1 only.")
 
+    prompts = load_prompt_bundle(prompt_lang)
     configure_runtime(cuda_devices)
 
     import torch
@@ -408,6 +483,7 @@ def train(
     click.echo(f"output_dir: {output_dir}")
     click.echo(f"cache_dir: {cache_dir}")
     click.echo(f"cache_mode: {cache_mode}")
+    click.echo(f"prompt_lang: {prompts.lang}")
     click.echo(f"ffmpeg: {ffmpeg}")
 
     dataset = load_asd_ds(data_root)
@@ -446,7 +522,7 @@ def train(
                 max_frames=max_frames,
                 max_audio_seconds=max_audio_seconds,
                 image_width=image_width,
-                system_prompt=system_prompt,
+                prompts=prompts,
             ),
             mode=cache_mode,
         )
@@ -460,7 +536,7 @@ def train(
         max_frames=max_frames,
         max_audio_seconds=max_audio_seconds,
         image_width=image_width,
-        system_prompt=system_prompt,
+        prompts=prompts,
         cache_store=cache_store,
     )
 
@@ -524,7 +600,7 @@ def train(
             max_frames=max_frames,
             max_audio_seconds=max_audio_seconds,
             image_width=image_width,
-            system_prompt=system_prompt,
+            prompts=prompts,
             output_dir=output_dir / "generated_metrics",
             max_new_tokens=prediction_max_new_tokens,
             wandb_enabled=wandb,
@@ -875,7 +951,7 @@ class Gemma4ASDDSCollator:
         max_frames: int,
         max_audio_seconds: float,
         image_width: int,
-        system_prompt: str,
+        prompts: PromptBundle,
         cache_store: "ProcessorCache | None" = None,
     ) -> None:
         self.processor = processor
@@ -884,7 +960,7 @@ class Gemma4ASDDSCollator:
         self.max_frames = max_frames
         self.max_audio_seconds = max_audio_seconds
         self.image_width = image_width
-        self.system_prompt = system_prompt
+        self.prompts = prompts
         self.cache_store = cache_store
 
     def __call__(self, examples: list[dict]) -> dict:
@@ -900,7 +976,7 @@ class Gemma4ASDDSCollator:
             max_frames=self.max_frames,
             max_audio_seconds=self.max_audio_seconds,
             image_width=self.image_width,
-            system_prompt=self.system_prompt,
+            prompts=self.prompts,
         )
         if self.cache_store is None:
             return builder()
@@ -950,7 +1026,7 @@ class GeneratedMetricsEvaluator:
         max_frames: int,
         max_audio_seconds: float,
         image_width: int,
-        system_prompt: str,
+        prompts: PromptBundle,
         output_dir: Path,
         max_new_tokens: int,
         wandb_enabled: bool,
@@ -962,7 +1038,7 @@ class GeneratedMetricsEvaluator:
         self.max_frames = max_frames
         self.max_audio_seconds = max_audio_seconds
         self.image_width = image_width
-        self.system_prompt = system_prompt
+        self.prompts = prompts
         self.output_dir = output_dir
         self.max_new_tokens = max_new_tokens
         self.wandb_enabled = wandb_enabled
@@ -1007,7 +1083,7 @@ class GeneratedMetricsEvaluator:
                     max_frames=self.max_frames,
                     max_audio_seconds=self.max_audio_seconds,
                     image_width=self.image_width,
-                    system_prompt=self.system_prompt,
+                    prompts=self.prompts,
                 )
                 if self.cache_store is None:
                     prompt_inputs = builder()
@@ -1151,7 +1227,7 @@ class ProcessorCache:
             raise click.ClickException(
                 f"Missing {kind} processor cache for {row['split']}/{row['row_idx']} "
                 f"{row['video_id']}: {path}\n"
-                "Run `run_train.py build-cache` with the same media/system-prompt parameters first."
+                "Run `run_train.py build-cache` with the same media and prompt-language parameters first."
             )
 
         batch = builder()
@@ -1209,7 +1285,7 @@ def build_cache_config(
     max_frames: int,
     max_audio_seconds: float,
     image_width: int,
-    system_prompt: str,
+    prompts: PromptBundle,
 ) -> dict[str, Any]:
     return {
         "cache_version": CACHE_VERSION,
@@ -1218,8 +1294,9 @@ def build_cache_config(
         "max_frames": int(max_frames),
         "max_audio_seconds": float(max_audio_seconds),
         "image_width": int(image_width),
-        "system_prompt_sha256": hashlib.sha256(system_prompt.encode("utf-8")).hexdigest(),
-        "user_instruction_sha256": hashlib.sha256(USER_INSTRUCTION.encode("utf-8")).hexdigest(),
+        "prompt_lang": prompts.lang,
+        "system_prompt_sha256": hashlib.sha256(prompts.system.encode("utf-8")).hexdigest(),
+        "user_prompt_sha256": hashlib.sha256(prompts.user.encode("utf-8")).hexdigest(),
     }
 
 
@@ -1233,7 +1310,7 @@ def build_cached_kind(
     max_frames: int,
     max_audio_seconds: float,
     image_width: int,
-    system_prompt: str,
+    prompts: PromptBundle,
 ) -> dict[str, Any]:
     if kind == "supervised":
         return build_supervised_inputs(
@@ -1244,7 +1321,7 @@ def build_cached_kind(
             max_frames=max_frames,
             max_audio_seconds=max_audio_seconds,
             image_width=image_width,
-            system_prompt=system_prompt,
+            prompts=prompts,
         )
     if kind == "prompt":
         return build_prompt_inputs(
@@ -1255,9 +1332,103 @@ def build_cached_kind(
             max_frames=max_frames,
             max_audio_seconds=max_audio_seconds,
             image_width=image_width,
-            system_prompt=system_prompt,
+            prompts=prompts,
         )
     raise ValueError(f"Unknown cache kind: {kind}")
+
+
+def init_cache_worker(
+    model_dir: str,
+    cache_dir: str,
+    cache_config: dict[str, Any],
+    ffmpeg: str,
+    cache_kinds: tuple[str, ...],
+    frame_fps: float,
+    max_frames: int,
+    max_audio_seconds: float,
+    image_width: int,
+    prompts: PromptBundle,
+) -> None:
+    from transformers import AutoProcessor
+
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    _CACHE_WORKER_STATE.clear()
+    _CACHE_WORKER_STATE.update(
+        {
+            "processor": AutoProcessor.from_pretrained(model_dir, local_files_only=True),
+            "cache_store": ProcessorCache(
+                cache_dir=Path(cache_dir),
+                config=cache_config,
+                mode="read-write",
+            ),
+            "ffmpeg": ffmpeg,
+            "cache_kinds": cache_kinds,
+            "frame_fps": frame_fps,
+            "max_frames": max_frames,
+            "max_audio_seconds": max_audio_seconds,
+            "image_width": image_width,
+            "prompts": prompts,
+        }
+    )
+
+
+def build_cache_row_worker(row: dict, overwrite: bool) -> dict[str, int]:
+    if not _CACHE_WORKER_STATE:
+        raise RuntimeError("Cache worker was not initialized")
+
+    return build_cache_row(
+        cache_store=_CACHE_WORKER_STATE["cache_store"],
+        processor=_CACHE_WORKER_STATE["processor"],
+        ffmpeg=_CACHE_WORKER_STATE["ffmpeg"],
+        row=row,
+        cache_kinds=_CACHE_WORKER_STATE["cache_kinds"],
+        overwrite=overwrite,
+        frame_fps=_CACHE_WORKER_STATE["frame_fps"],
+        max_frames=_CACHE_WORKER_STATE["max_frames"],
+        max_audio_seconds=_CACHE_WORKER_STATE["max_audio_seconds"],
+        image_width=_CACHE_WORKER_STATE["image_width"],
+        prompts=_CACHE_WORKER_STATE["prompts"],
+    )
+
+
+def build_cache_row(
+    *,
+    cache_store: ProcessorCache,
+    processor: Any,
+    ffmpeg: str,
+    row: dict,
+    cache_kinds: tuple[str, ...],
+    overwrite: bool,
+    frame_fps: float,
+    max_frames: int,
+    max_audio_seconds: float,
+    image_width: int,
+    prompts: PromptBundle,
+) -> dict[str, int]:
+    written = 0
+    existing = 0
+    for kind in cache_kinds:
+        did_write = cache_store.build_or_refresh(
+            kind=kind,
+            row=row,
+            overwrite=overwrite,
+            builder=lambda kind=kind: build_cached_kind(
+                kind=kind,
+                processor=processor,
+                ffmpeg=ffmpeg,
+                row=row,
+                frame_fps=frame_fps,
+                max_frames=max_frames,
+                max_audio_seconds=max_audio_seconds,
+                image_width=image_width,
+                prompts=prompts,
+            ),
+        )
+        if did_write:
+            written += 1
+        else:
+            existing += 1
+    return {"written": written, "existing": existing}
 
 
 def detach_tensor_dict_to_cpu(batch: dict[str, Any]) -> dict[str, Any]:
@@ -1505,7 +1676,7 @@ def build_supervised_inputs(
     max_frames: int,
     max_audio_seconds: float,
     image_width: int,
-    system_prompt: str,
+    prompts: PromptBundle,
 ) -> dict[str, Any]:
     from transformers.video_utils import VideoMetadata
 
@@ -1531,13 +1702,13 @@ def build_supervised_inputs(
     prompt_text = build_chat_text(
         processor,
         row,
-        system_prompt=system_prompt,
+        prompts=prompts,
         include_answer=False,
     )
     full_text = build_chat_text(
         processor,
         row,
-        system_prompt=system_prompt,
+        prompts=prompts,
         include_answer=True,
     )
     prompt_inputs = processor(
@@ -1574,7 +1745,7 @@ def build_prompt_inputs(
     max_frames: int,
     max_audio_seconds: float,
     image_width: int,
-    system_prompt: str,
+    prompts: PromptBundle,
 ) -> dict[str, Any]:
     from transformers.video_utils import VideoMetadata
 
@@ -1600,7 +1771,7 @@ def build_prompt_inputs(
     prompt_text = build_chat_text(
         processor,
         row,
-        system_prompt=system_prompt,
+        prompts=prompts,
         include_answer=False,
     )
     return processor(
@@ -1869,15 +2040,15 @@ def run_command(
         raise click.ClickException(f"Command failed: {' '.join(command)}\n{stderr}") from exc
 
 
-def build_chat_text(processor, row: dict, *, system_prompt: str, include_answer: bool) -> str:
+def build_chat_text(processor, row: dict, *, prompts: PromptBundle, include_answer: bool) -> str:
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": prompts.system},
         {
             "role": "user",
             "content": [
                 {"type": "video"},
                 {"type": "audio"},
-                {"type": "text", "text": USER_INSTRUCTION},
+                {"type": "text", "text": prompts.user},
             ],
         },
     ]

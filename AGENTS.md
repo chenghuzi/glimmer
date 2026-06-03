@@ -29,6 +29,8 @@ uv add <package>
 - Main inference smoke script: `main.py`
 - Dataset adapter: `asd_ds_dataset.py`
 - Training CLI: `run_train.py`
+- Prompt files: `prompts/en/*.md`, `prompts/zh/*.md`
+- Chinese prompt training script: `scripts/train_zh_v2.sh`
 - Fine-tuning plan: `docs/ft_plan.md`
 - iOS deployment plan: `docs/deploy2ios.md`
 - Language-agnostic plan: `docs/unfinished_lang_agnostic.md`
@@ -76,6 +78,11 @@ The supervised output is strict JSON:
 - `build-cache`: precompute Gemma processor outputs so training avoids per-step ffmpeg/processor work.
 - `train`: BF16 LoRA fine-tuning with validation loss, generated validation metrics, final validation metrics, and final test metrics.
 
+Prompt language is selected with `--prompt-lang en` or `--prompt-lang zh`. Prompt text is loaded from external Markdown files:
+
+- `prompts/en/system.md`, `prompts/en/user.md`
+- `prompts/zh/system.md`, `prompts/zh/user.md`
+
 The LoRA defaults are:
 
 - `r=32`
@@ -107,6 +114,8 @@ For serious runs, build cache first:
 ```bash
 ./.venv/bin/python run_train.py build-cache \
   --cache-dir outputs/asd_ds_processor_cache \
+  --prompt-lang en \
+  --workers 8 \
   --frame-fps 1.0 \
   --max-frames 16 \
   --max-audio-seconds 30 \
@@ -124,7 +133,9 @@ Then train with:
 
 `require` is preferred for real training because it fails on missing cache instead of silently falling back to slow media preprocessing.
 
-Cache keys include model path, media parameters, and prompt hashes. If `--max-frames`, `--max-audio-seconds`, `--image-width`, `--frame-fps`, model path, or system prompt changes, rebuild cache.
+Use `--workers 8` for faster cache rebuilds on this workstation. Lower it if CPU, RAM, or disk I/O becomes saturated.
+
+Cache keys include model path, media parameters, `--prompt-lang`, and prompt file hashes. If `--max-frames`, `--max-audio-seconds`, `--image-width`, `--frame-fps`, model path, prompt language, or prompt file contents change, rebuild cache.
 
 ## Metrics and Outputs
 
@@ -162,6 +173,7 @@ Run one-sample preprocessing smoke:
 ./.venv/bin/python run_train.py smoke-test \
   --split train \
   --index 0 \
+  --prompt-lang en \
   --max-frames 4 \
   --max-audio-seconds 4 \
   --image-width 256
@@ -174,6 +186,7 @@ Debug one-step training without W&B:
   --cuda-devices 1,2,3 \
   --output-dir outputs/debug-train \
   --run-name debug-train \
+  --prompt-lang en \
   --no-wandb \
   --max-steps 1 \
   --max-train-samples 1 \
