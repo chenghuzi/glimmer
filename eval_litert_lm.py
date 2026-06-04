@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -68,6 +69,7 @@ DEFAULT_MEDIA_CACHE_DIR = (
 @click.option("--temperature", default=0.0, show_default=True, type=click.FloatRange(min=0.0))
 @click.option("--top-p", default=1.0, show_default=True, type=click.FloatRange(min=0.0, max=1.0))
 @click.option("--top-k", default=1, show_default=True, type=click.IntRange(min=1))
+@click.option("--workers", default=1, show_default=True, type=click.IntRange(min=1))
 @click.option("--rebuild-media-cache/--reuse-media-cache", default=False, show_default=True)
 def main(
     *,
@@ -91,17 +93,47 @@ def main(
     temperature: float,
     top_p: float,
     top_k: int,
+    workers: int,
     rebuild_media_cache: bool,
 ) -> None:
     """Evaluate exported LiteRT-LM model on ASD-DS with project metrics."""
-    import litert_lm
-
     litertlm_file = litertlm_file.expanduser()
     if not litertlm_file.is_file():
         raise click.ClickException(f"--litertlm-file does not exist: {litertlm_file}")
 
     prompts = load_prompt_bundle(prompt_lang)
     dataset = load_asd_ds(data_root)[split]
+    if workers > 1:
+        run_parallel_eval(
+            litertlm_file=litertlm_file,
+            data_root=data_root,
+            model_dir=model_dir,
+            split=split,
+            prompt_lang=prompt_lang,
+            output_dir=output_dir,
+            media_cache_dir=media_cache_dir,
+            frame_fps=frame_fps,
+            max_frames=max_frames,
+            max_audio_seconds=max_audio_seconds,
+            image_width=image_width,
+            max_samples=max_samples,
+            start_index=start_index,
+            backend=backend,
+            vision_backend=vision_backend,
+            audio_backend=audio_backend,
+            cache_dir=cache_dir,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            workers=workers,
+            rebuild_media_cache=rebuild_media_cache,
+            prompts=prompts,
+            full_dataset_len=len(dataset),
+        )
+        hard_exit_success()
+
+    import litert_lm
+
     if start_index:
         dataset = dataset.skip(start_index)
     if max_samples is not None:
@@ -245,6 +277,299 @@ def main(
         f"elapsed={elapsed:.1f}s"
     )
     click.echo(f"[litert-metrics] saved: {metrics_path}")
+    hard_exit_success()
+
+
+def run_parallel_eval(
+    *,
+    litertlm_file: Path,
+    data_root: Path,
+    model_dir: Path,
+    split: str,
+    prompt_lang: str,
+    output_dir: Path,
+    media_cache_dir: Path,
+    frame_fps: float,
+    max_frames: int,
+    max_audio_seconds: float,
+    image_width: int,
+    max_samples: int | None,
+    start_index: int,
+    backend: str,
+    vision_backend: str,
+    audio_backend: str,
+    cache_dir: Path | None,
+    temperature: float,
+    top_p: float,
+    top_k: int,
+    workers: int,
+    rebuild_media_cache: bool,
+    prompts: Any,
+    full_dataset_len: int,
+) -> None:
+    total = max(0, full_dataset_len - start_index)
+    if max_samples is not None:
+        total = min(total, max_samples)
+    if total <= 0:
+        raise click.ClickException("No samples selected for evaluation.")
+
+    workers = min(workers, total)
+    run_id = make_run_id(split=split, prompt_lang=prompt_lang, start_index=start_index, max_samples=max_samples)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    media_cache_dir.mkdir(parents=True, exist_ok=True)
+    shard_root = output_dir / "_parallel_shards" / run_id
+    if shard_root.exists():
+        shutil.rmtree(shard_root)
+    shard_root.mkdir(parents=True)
+
+    cache_base = cache_dir or (litertlm_file.parent / "litert_cache_parallel")
+    cache_base = cache_base / run_id
+    cache_base.mkdir(parents=True, exist_ok=True)
+
+    click.echo("== Parallel LiteRT-LM eval setup ==")
+    click.echo(f"litertlm_file: {litertlm_file}")
+    click.echo(f"split: {split}")
+    click.echo(f"samples: {total}")
+    click.echo(f"workers: {workers}")
+    click.echo(f"output_dir: {output_dir}")
+    click.echo(f"shard_root: {shard_root}")
+    click.echo(f"media_cache_dir: {media_cache_dir}")
+    click.echo(f"cache_base: {cache_base}")
+
+    shards = make_shards(total=total, start_index=start_index, workers=workers)
+    processes = []
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    for worker_index, (shard_start, shard_count) in enumerate(shards):
+        shard_output_dir = shard_root / f"worker_{worker_index:02d}"
+        shard_cache_dir = cache_base / f"worker_{worker_index:02d}"
+        shard_log = shard_root / f"worker_{worker_index:02d}.log"
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--litertlm-file",
+            str(litertlm_file),
+            "--data-root",
+            str(data_root),
+            "--model-dir",
+            str(model_dir),
+            "--split",
+            split,
+            "--prompt-lang",
+            prompt_lang,
+            "--output-dir",
+            str(shard_output_dir),
+            "--media-cache-dir",
+            str(media_cache_dir),
+            "--frame-fps",
+            str(frame_fps),
+            "--max-frames",
+            str(max_frames),
+            "--max-audio-seconds",
+            str(max_audio_seconds),
+            "--image-width",
+            str(image_width),
+            "--start-index",
+            str(shard_start),
+            "--max-samples",
+            str(shard_count),
+            "--backend",
+            backend,
+            "--vision-backend",
+            vision_backend,
+            "--audio-backend",
+            audio_backend,
+            "--cache-dir",
+            str(shard_cache_dir),
+            "--temperature",
+            str(temperature),
+            "--top-p",
+            str(top_p),
+            "--top-k",
+            str(top_k),
+            "--workers",
+            "1",
+        ]
+        if rebuild_media_cache:
+            command.append("--rebuild-media-cache")
+        log_handle = shard_log.open("w", encoding="utf-8")
+        process = subprocess.Popen(command, stdout=log_handle, stderr=subprocess.STDOUT, env=env)
+        processes.append(
+            {
+                "worker_index": worker_index,
+                "start": shard_start,
+                "count": shard_count,
+                "process": process,
+                "log_handle": log_handle,
+                "log_path": shard_log,
+                "output_dir": shard_output_dir,
+            }
+        )
+        click.echo(
+            f"[parallel] worker={worker_index} pid={process.pid} "
+            f"start={shard_start} count={shard_count} log={shard_log}"
+        )
+
+    started = time.perf_counter()
+    while True:
+        running = [entry for entry in processes if entry["process"].poll() is None]
+        finished = len(processes) - len(running)
+        elapsed = time.perf_counter() - started
+        progress_parts = []
+        for entry in processes:
+            prediction_count = count_shard_predictions(
+                output_dir=entry["output_dir"],
+                split=split,
+                prompt_lang=prompt_lang,
+                start=entry["start"],
+                count=entry["count"],
+            )
+            progress_parts.append(f"w{entry['worker_index']}={prediction_count}/{entry['count']}")
+        click.echo(f"[parallel] finished={finished}/{len(processes)} elapsed={elapsed:.1f}s {' '.join(progress_parts)}")
+        if not running:
+            break
+        time.sleep(30)
+
+    for entry in processes:
+        entry["log_handle"].close()
+
+    failed = [entry for entry in processes if entry["process"].returncode != 0]
+    if failed:
+        for entry in failed:
+            click.echo(f"== worker {entry['worker_index']} failed log tail ==")
+            click.echo(tail_text(entry["log_path"], lines=80))
+        raise click.ClickException(
+            "Parallel LiteRT-LM eval failed for worker(s): "
+            + ", ".join(str(entry["worker_index"]) for entry in failed)
+        )
+
+    records = []
+    for entry in processes:
+        child_run_id = make_run_id(
+            split=split,
+            prompt_lang=prompt_lang,
+            start_index=entry["start"],
+            max_samples=entry["count"],
+        )
+        predictions_path = entry["output_dir"] / f"{child_run_id}_predictions.jsonl"
+        if not predictions_path.is_file():
+            raise click.ClickException(f"Missing shard predictions: {predictions_path}")
+        with predictions_path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    records.append(json.loads(line))
+
+    records.sort(key=lambda record: int(record["index"]))
+    if len(records) != total:
+        raise click.ClickException(f"Expected {total} merged predictions, got {len(records)}")
+
+    predictions_path = output_dir / f"{run_id}_predictions.jsonl"
+    metrics_path = output_dir / f"{run_id}_metrics.json"
+    figure_path = output_dir / f"{run_id}_f1.png"
+    with predictions_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            record["merged_run_id"] = run_id
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    y_true = np.asarray([record["target_label_vector"] for record in records], dtype=np.int64)
+    y_pred = np.asarray([record["predicted_label_vector"] for record in records], dtype=np.int64)
+    metrics = compute_multilabel_metrics(
+        y_true=y_true,
+        y_pred=y_pred,
+        parse_ok=[bool(record["parse_ok"]) for record in records],
+        split_name=run_id,
+        step=0,
+        epoch=None,
+    )
+    elapsed = time.perf_counter() - started
+    metrics["runtime"] = {
+        "elapsed_seconds": elapsed,
+        "seconds_per_sample": elapsed / len(records) if records else None,
+        "workers": workers,
+    }
+    metrics["config"] = {
+        "litertlm_file": str(litertlm_file),
+        "data_root": str(data_root),
+        "model_dir": str(model_dir),
+        "split": split,
+        "prompt_lang": prompt_lang,
+        "prompt_files": {
+            "system": str(prompts.system_path),
+            "user": str(prompts.user_path),
+        },
+        "frame_fps": frame_fps,
+        "max_frames": max_frames,
+        "max_audio_seconds": max_audio_seconds,
+        "image_width": image_width,
+        "backend": backend,
+        "vision_backend": vision_backend,
+        "audio_backend": audio_backend,
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
+        "workers": workers,
+        "shards": [
+            {"worker_index": entry["worker_index"], "start": entry["start"], "count": entry["count"]}
+            for entry in processes
+        ],
+    }
+    metrics["artifacts"] = {
+        "predictions_jsonl": str(predictions_path),
+        "metrics_json": str(metrics_path),
+        "f1_png": str(figure_path),
+        "shard_root": str(shard_root),
+    }
+    metrics_path.write_text(json.dumps(metrics, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    save_f1_figure(metrics=metrics, path=figure_path)
+    click.echo(
+        "[litert-metrics] "
+        f"{run_id}: micro_f1={metrics['micro']['f1']:.4f} "
+        f"macro_f1={metrics['macro']['f1']:.4f} "
+        f"exact_match={metrics['exact_match']:.4f} "
+        f"parse_rate={metrics['parse_rate']:.4f} "
+        f"elapsed={elapsed:.1f}s workers={workers}"
+    )
+    click.echo(f"[litert-metrics] saved: {metrics_path}")
+
+
+def make_shards(*, total: int, start_index: int, workers: int) -> list[tuple[int, int]]:
+    base = total // workers
+    remainder = total % workers
+    shards = []
+    cursor = start_index
+    for worker_index in range(workers):
+        count = base + (1 if worker_index < remainder else 0)
+        if count <= 0:
+            continue
+        shards.append((cursor, count))
+        cursor += count
+    return shards
+
+
+def count_shard_predictions(
+    *,
+    output_dir: Path,
+    split: str,
+    prompt_lang: str,
+    start: int,
+    count: int,
+) -> int:
+    run_id = make_run_id(split=split, prompt_lang=prompt_lang, start_index=start, max_samples=count)
+    path = output_dir / f"{run_id}_predictions.jsonl"
+    if not path.is_file():
+        return 0
+    with path.open(encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip())
+
+
+def tail_text(path: Path, *, lines: int) -> str:
+    if not path.is_file():
+        return f"<missing log: {path}>"
+    content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    return "\n".join(content[-lines:])
+
+
+def hard_exit_success() -> None:
     sys.stdout.flush()
     sys.stderr.flush()
     # The current LiteRT-LM native library can crash during interpreter
@@ -367,10 +692,12 @@ def generate_one(
     audio_path: Path,
     sampler_config: Any,
 ) -> str:
+    # Gemma 4 LiteRT-LM is sensitive to modality order: images before text,
+    # audio after text. Audio before text caused thought-channel-only outputs.
     contents = [
         *[litert_lm.Content.ImageFile(absolute_path=str(path.resolve())) for path in frame_paths],
-        litert_lm.Content.AudioFile(absolute_path=str(audio_path.resolve())),
         litert_lm.Content.Text(user_prompt),
+        litert_lm.Content.AudioFile(absolute_path=str(audio_path.resolve())),
     ]
     messages = [litert_lm.Message.system(system_prompt)]
     with engine.create_conversation(messages=messages, sampler_config=sampler_config) as conversation:
