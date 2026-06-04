@@ -4,9 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-RUN_NAME="gemma4-asd-lora-r32-remix010-zh-v2"
-CACHE_DIR="outputs/asd_ds_processor_cache"
-CACHE_WORKERS="${CACHE_WORKERS:-8}"
+RUN_NAME="${RUN_NAME:-gemma4-asd-lora-r32-code9-zh-v1}"
+CACHE_DIR="${CACHE_DIR:-outputs/asd_ds_processor_cache_code9}"
+CACHE_WORKERS="${CACHE_WORKERS:-12}"
 SKIP_CACHE="${SKIP_CACHE:-0}"
 TRAIN_PHYSICAL_CUDA_DEVICES="${TRAIN_PHYSICAL_CUDA_DEVICES:-2,3}"
 TRAIN_CUDA_DEVICES="${TRAIN_CUDA_DEVICES:-0,1}"
@@ -66,7 +66,7 @@ PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}" \
   --lora-dropout 0.05 \
   --target-modules language \
   --max-memory-per-gpu 22GiB \
-  --prediction-max-new-tokens 256 \
+  --prediction-max-new-tokens 16 \
   --generated-metrics \
   --bf16 \
   --gradient-checkpointing
