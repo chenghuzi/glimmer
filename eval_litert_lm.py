@@ -66,6 +66,7 @@ DEFAULT_MEDIA_CACHE_DIR = (
 @click.option("--backend", default="gpu", show_default=True, type=click.Choice(["gpu", "cpu"]))
 @click.option("--vision-backend", default="gpu", show_default=True, type=click.Choice(["gpu", "cpu"]))
 @click.option("--audio-backend", default="cpu", show_default=True, type=click.Choice(["gpu", "cpu"]))
+@click.option("--audio/--no-audio", "use_audio", default=True, show_default=True)
 @click.option("--cache-dir", default=None, type=click.Path(path_type=Path), help="LiteRT-LM compiled artifact cache dir.")
 @click.option("--temperature", default=0.0, show_default=True, type=click.FloatRange(min=0.0))
 @click.option("--top-p", default=1.0, show_default=True, type=click.FloatRange(min=0.0, max=1.0))
@@ -96,6 +97,7 @@ def main(
     backend: str,
     vision_backend: str,
     audio_backend: str,
+    use_audio: bool,
     cache_dir: Path | None,
     temperature: float,
     top_p: float,
@@ -129,6 +131,7 @@ def main(
             backend=backend,
             vision_backend=vision_backend,
             audio_backend=audio_backend,
+            use_audio=use_audio,
             cache_dir=cache_dir,
             temperature=temperature,
             top_p=top_p,
@@ -153,7 +156,13 @@ def main(
     if cache_dir is not None:
         cache_dir.mkdir(parents=True, exist_ok=True)
     ffmpeg = find_tool("ffmpeg")
-    run_id = make_run_id(split=split, prompt_lang=prompt_lang, start_index=start_index, max_samples=max_samples)
+    run_id = make_run_id(
+        split=split,
+        prompt_lang=prompt_lang,
+        start_index=start_index,
+        max_samples=max_samples,
+        use_audio=use_audio,
+    )
     predictions_path = output_dir / f"{run_id}_predictions.jsonl"
     metrics_path = output_dir / f"{run_id}_metrics.json"
     figure_path = output_dir / f"{run_id}_f1.png"
@@ -170,6 +179,7 @@ def main(
     click.echo(f"backend: {backend}")
     click.echo(f"vision_backend: {vision_backend}")
     click.echo(f"audio_backend: {audio_backend}")
+    click.echo(f"use_audio: {use_audio}")
 
     litert_lm.set_min_log_severity(litert_lm.LogSeverity.ERROR)
     sampler_config = litert_lm.SamplerConfig(top_k=top_k, top_p=top_p, temperature=temperature, seed=42)
@@ -201,6 +211,7 @@ def main(
                     max_frames=max_frames,
                     max_audio_seconds=max_audio_seconds,
                     image_width=image_width,
+                    use_audio=use_audio,
                     rebuild=rebuild_media_cache,
                 )
                 response_text = generate_one(
@@ -210,6 +221,7 @@ def main(
                     user_prompt=prompts.user,
                     frame_paths=media["frame_paths"],
                     audio_path=media["audio_path"],
+                    use_audio=use_audio,
                     sampler_config=sampler_config,
                     max_output_tokens=max_output_tokens,
                 )
@@ -237,7 +249,7 @@ def main(
                     "parse_ok": parsed["parse_ok"],
                     "parse_error": parsed["parse_error"],
                     "frame_paths": [str(path) for path in media["frame_paths"]],
-                    "audio_path": str(media["audio_path"]),
+                    "audio_path": str(media["audio_path"]) if media["audio_path"] is not None else None,
                 }
                 records.append(record)
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -273,6 +285,7 @@ def main(
         "backend": backend,
         "vision_backend": vision_backend,
         "audio_backend": audio_backend,
+        "use_audio": use_audio,
         "temperature": temperature,
         "top_p": top_p,
         "top_k": top_k,
@@ -316,6 +329,7 @@ def run_parallel_eval(
     backend: str,
     vision_backend: str,
     audio_backend: str,
+    use_audio: bool,
     cache_dir: Path | None,
     temperature: float,
     top_p: float,
@@ -333,7 +347,13 @@ def run_parallel_eval(
         raise click.ClickException("No samples selected for evaluation.")
 
     workers = min(workers, total)
-    run_id = make_run_id(split=split, prompt_lang=prompt_lang, start_index=start_index, max_samples=max_samples)
+    run_id = make_run_id(
+        split=split,
+        prompt_lang=prompt_lang,
+        start_index=start_index,
+        max_samples=max_samples,
+        use_audio=use_audio,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     media_cache_dir.mkdir(parents=True, exist_ok=True)
     shard_root = output_dir / "_parallel_shards" / run_id
@@ -398,6 +418,7 @@ def run_parallel_eval(
             vision_backend,
             "--audio-backend",
             audio_backend,
+            "--audio" if use_audio else "--no-audio",
             "--cache-dir",
             str(shard_cache_dir),
             "--temperature",
@@ -443,6 +464,7 @@ def run_parallel_eval(
                 prompt_lang=prompt_lang,
                 start=entry["start"],
                 count=entry["count"],
+                use_audio=use_audio,
             )
             progress_parts.append(f"w{entry['worker_index']}={prediction_count}/{entry['count']}")
         click.echo(f"[parallel] finished={finished}/{len(processes)} elapsed={elapsed:.1f}s {' '.join(progress_parts)}")
@@ -470,6 +492,7 @@ def run_parallel_eval(
             prompt_lang=prompt_lang,
             start_index=entry["start"],
             max_samples=entry["count"],
+            use_audio=use_audio,
         )
         predictions_path = entry["output_dir"] / f"{child_run_id}_predictions.jsonl"
         if not predictions_path.is_file():
@@ -532,6 +555,7 @@ def run_parallel_eval(
         "backend": backend,
         "vision_backend": vision_backend,
         "audio_backend": audio_backend,
+        "use_audio": use_audio,
         "temperature": temperature,
         "top_p": top_p,
         "top_k": top_k,
@@ -582,8 +606,15 @@ def count_shard_predictions(
     prompt_lang: str,
     start: int,
     count: int,
+    use_audio: bool,
 ) -> int:
-    run_id = make_run_id(split=split, prompt_lang=prompt_lang, start_index=start, max_samples=count)
+    run_id = make_run_id(
+        split=split,
+        prompt_lang=prompt_lang,
+        start_index=start,
+        max_samples=count,
+        use_audio=use_audio,
+    )
     path = output_dir / f"{run_id}_predictions.jsonl"
     if not path.is_file():
         return 0
@@ -615,10 +646,18 @@ def make_backend(litert_lm: Any, name: str) -> Any:
     raise ValueError(f"Unsupported backend: {name}")
 
 
-def make_run_id(*, split: str, prompt_lang: str, start_index: int, max_samples: int | None) -> str:
+def make_run_id(
+    *,
+    split: str,
+    prompt_lang: str,
+    start_index: int,
+    max_samples: int | None,
+    use_audio: bool,
+) -> str:
+    modality = "audio" if use_audio else "noaudio"
     if max_samples is None and start_index == 0:
-        return f"{split}_litert_w4_audio_{prompt_lang}"
-    return f"{split}_litert_w4_audio_{prompt_lang}_start_{start_index:04d}_n_{max_samples or 'all'}"
+        return f"{split}_litert_{modality}_{prompt_lang}"
+    return f"{split}_litert_{modality}_{prompt_lang}_start_{start_index:04d}_n_{max_samples or 'all'}"
 
 
 def prepare_media(
@@ -631,6 +670,7 @@ def prepare_media(
     max_frames: int,
     max_audio_seconds: float,
     image_width: int,
+    use_audio: bool,
     rebuild: bool,
 ) -> dict[str, Any]:
     duration_sec = float(row["duration_sec"])
@@ -645,18 +685,25 @@ def prepare_media(
         "max_audio_seconds": max_audio_seconds,
         "image_width": image_width,
         "frame_count": frame_count,
-        "audio_codec": "pcm_s16le",
-        "audio_sample_rate": 16000,
-        "audio_channels": 1,
+        "use_audio": use_audio,
     }
+    if use_audio:
+        config.update(
+            {
+                "audio_codec": "pcm_s16le",
+                "audio_sample_rate": 16000,
+                "audio_channels": 1,
+            }
+        )
     digest = stable_hash(config)[:12]
     sample_dir = media_cache_dir / f"{sample_index:04d}_{sanitize_cache_name(str(row['video_id']))}_{digest}"
     manifest_path = sample_dir / "manifest.json"
     if not rebuild and manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         frame_paths = [Path(path) for path in manifest["frame_paths"]]
-        audio_path = Path(manifest["audio_path"])
-        if audio_path.is_file() and all(path.is_file() for path in frame_paths):
+        audio_path = Path(manifest["audio_path"]) if manifest.get("audio_path") else None
+        audio_ready = audio_path is None or audio_path.is_file()
+        if audio_ready and all(path.is_file() for path in frame_paths):
             return {"frame_paths": frame_paths, "audio_path": audio_path}
 
     if sample_dir.exists():
@@ -677,35 +724,37 @@ def prepare_media(
         frame.save(frame_path, format="JPEG", quality=95)
         frame_paths.append(frame_path.resolve())
 
-    audio_path = (sample_dir / "audio_16k_mono.wav").resolve()
-    run_command(
-        [
-            ffmpeg,
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(row["audio_path"]),
-            "-t",
-            f"{min(duration_sec, max_audio_seconds):.3f}",
-            "-ac",
-            "1",
-            "-ar",
-            "16000",
-            "-c:a",
-            "pcm_s16le",
-            str(audio_path),
-        ]
-    )
-    if not audio_path.is_file():
-        raise click.ClickException(f"ffmpeg did not create audio file: {audio_path}")
+    audio_path = None
+    if use_audio:
+        audio_path = (sample_dir / "audio_16k_mono.wav").resolve()
+        run_command(
+            [
+                ffmpeg,
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-i",
+                str(row["audio_path"]),
+                "-t",
+                f"{min(duration_sec, max_audio_seconds):.3f}",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "pcm_s16le",
+                str(audio_path),
+            ]
+        )
+        if not audio_path.is_file():
+            raise click.ClickException(f"ffmpeg did not create audio file: {audio_path}")
 
     manifest = {
         "config": config,
         "frame_paths": [str(path) for path in frame_paths],
-        "audio_path": str(audio_path),
+        "audio_path": str(audio_path) if audio_path is not None else None,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return {"frame_paths": frame_paths, "audio_path": audio_path}
@@ -718,17 +767,19 @@ def generate_one(
     system_prompt: str,
     user_prompt: str,
     frame_paths: list[Path],
-    audio_path: Path,
+    audio_path: Path | None,
+    use_audio: bool,
     sampler_config: Any,
     max_output_tokens: int | None,
 ) -> str:
-    # Match the training prompt order: video, audio, text. LiteRT-LM receives
-    # sampled image frames as the video proxy.
     contents = [
         *[litert_lm.Content.ImageFile(absolute_path=str(path.resolve())) for path in frame_paths],
-        litert_lm.Content.AudioFile(absolute_path=str(audio_path.resolve())),
-        litert_lm.Content.Text(user_prompt),
     ]
+    if use_audio:
+        if audio_path is None:
+            raise click.ClickException("Internal error: audio eval requested but audio_path is missing.")
+        contents.append(litert_lm.Content.AudioFile(absolute_path=str(audio_path.resolve())))
+    contents.append(litert_lm.Content.Text(user_prompt))
     messages = [litert_lm.Message.system(system_prompt)]
     with create_eval_conversation(
         litert_lm=litert_lm,

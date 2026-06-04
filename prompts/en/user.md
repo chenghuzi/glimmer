@@ -1,4 +1,4 @@
-Inspect the provided video and audio. Predict whether each canonical behavior feature B01 through B09 is observed.
+Inspect the provided visual clip and any provided audio. Predict whether each canonical behavior feature B01 through B09 is observed.
 
 Output exactly one line containing a 9-character binary code.
 
@@ -23,3 +23,13 @@ Rules:
 - Do not output JSON.
 - Do not output labels, spaces, punctuation, markdown, confidence values, or explanations.
 - The complete response must be exactly 9 characters long.
+
+Examples:
+- If none of B01 through B09 is observed, output:
+000000000
+- If only B01 is observed, output:
+100000000
+- If only B09 is observed, output:
+000000001
+- If B01 and B09 are both observed, output:
+100000001

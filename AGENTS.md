@@ -35,6 +35,18 @@ uv add <package>
 - iOS deployment plan: `docs/deploy2ios.md`
 - Language-agnostic plan: `docs/unfinished_lang_agnostic.md`
 
+## Run Notifications
+
+For long-running local experiments, send completion/failure notifications through Bark:
+
+```bash
+curl -fsS --get \
+  "https://api.day.app/7GofcjfmCvWZqvfrvYuFV/Codex%20run%20finished" \
+  --data-urlencode "body=Replace this with the run summary." \
+  --data-urlencode "group=hz_res_ft" \
+  --data-urlencode "isArchive=1"
+```
+
 ## Dataset Facts
 
 `asd_ds_dataset.py` exposes a read-only Hugging Face `DatasetDict` with splits:
