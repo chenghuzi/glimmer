@@ -2,7 +2,7 @@
 
 This repo fine-tunes a local Gemma 4 E4B instruction model on ASD-DS video/audio clips to predict structured behavior-feature labels.
 
-The model output is a canonical JSON label report with `B01` through `B10`. This system is behavioral screening support only. It is not a medical diagnosis tool.
+The trained model outputs a 9-bit label code for `B01` through `B09`; the app derives `B10` and assembles the final JSON report. This system is behavioral screening support only. It is not a medical diagnosis tool.
 
 ## Repository Layout
 
@@ -15,6 +15,7 @@ The model output is a canonical JSON label report with `B01` through `B10`. This
 |-- docs/
 |   |-- ft_plan.md
 |   |-- deploy2ios.md
+|   |-- robust_quant_plan.md
 |   `-- unfinished_lang_agnostic.md
 |-- prompts/                 # system/user prompt files selected by --prompt-lang
 |-- scripts/
@@ -79,6 +80,7 @@ Each sample includes media paths and structured labels:
 - `audio_path`
 - `label_vector`
 - `labels`
+- `target_code`
 - `target_json`
 
 Canonical label IDs:
@@ -96,7 +98,21 @@ Canonical label IDs:
 | B09 | Upper Limb Stereotypies |
 | B10 | Background |
 
-Target JSON shape:
+The supervised assistant target is a strict 9-bit code for `B01` through `B09`:
+
+```text
+000000000
+```
+
+The required format is:
+
+```text
+^[01]{9}$
+```
+
+`B10` is not predicted by the model. It is derived by the application: `B10=true` only when `B01` through `B09` are all `0`.
+
+`target_json` is retained as the final app-report reference shape:
 
 ```json
 {
@@ -161,7 +177,7 @@ Training directly from media is slow because each step must decode video/audio a
 
 ```bash
 ./.venv/bin/python run_train.py build-cache \
-  --cache-dir outputs/asd_ds_processor_cache \
+  --cache-dir outputs/asd_ds_processor_cache_code9 \
   --prompt-lang en \
   --workers 8 \
   --frame-fps 1.0 \
@@ -172,7 +188,7 @@ Training directly from media is slow because each step must decode video/audio a
   --cache-kind prompt
 ```
 
-This writes processor-ready tensors under `outputs/asd_ds_processor_cache/`.
+This writes processor-ready tensors under `outputs/asd_ds_processor_cache_code9/`.
 
 `--workers` controls parallel CPU cache builders. Use `--workers 8` for faster rebuilds on this workstation; lower it if CPU, RAM, or disk I/O becomes saturated.
 
@@ -200,11 +216,11 @@ Use physical CUDA GPUs `1,2,3`:
   --cuda-devices 1,2,3 \
   --model-dir /home/huzi/Downloads/gemma-4-E4B-it \
   --data-root data/raw/ASD-DS \
-  --output-dir outputs/gemma4-asd-lora-r32-full-v1 \
-  --cache-dir outputs/asd_ds_processor_cache \
+  --output-dir outputs/gemma4-asd-lora-r32-code9-full-v1 \
+  --cache-dir outputs/asd_ds_processor_cache_code9 \
   --cache-mode require \
   --prompt-lang en \
-  --run-name gemma4-asd-lora-r32-full-v1 \
+  --run-name gemma4-asd-lora-r32-code9-full-v1 \
   --wandb \
   --env-file .env \
   --wandb-project gemma4-asd-ft \
@@ -229,7 +245,7 @@ Use physical CUDA GPUs `1,2,3`:
   --lora-dropout 0.05 \
   --target-modules language \
   --max-memory-per-gpu 22GiB \
-  --prediction-max-new-tokens 256 \
+  --prediction-max-new-tokens 16 \
   --generated-metrics \
   --bf16 \
   --gradient-checkpointing
@@ -247,7 +263,7 @@ The Chinese prompt training workflow is saved as:
 ./scripts/train_zh_v2.sh
 ```
 
-It builds the matching `--prompt-lang zh` processor cache, then trains `outputs/gemma4-asd-lora-r32-remix010-zh-v2`.
+It builds the matching `--prompt-lang zh` processor cache, then trains `outputs/gemma4-asd-lora-r32-code9-zh-v1`.
 
 The script uses 8 cache workers by default. Override it with `CACHE_WORKERS=<n>` if needed.
 
@@ -264,7 +280,7 @@ The script trains on physical GPUs `2,3` by default and passes logical CUDA devi
 Training saves LoRA adapter weights, not a duplicate full base model:
 
 ```text
-outputs/gemma4-asd-lora-r32-full-v1/
+outputs/gemma4-asd-lora-r32-code9-full-v1/
 |-- adapter_config.json
 |-- adapter_model.safetensors
 |-- checkpoint-*/
@@ -314,7 +330,7 @@ Working 4-bit LiteRT-LM export command for the latest trained adapter:
 
 ```bash
 ./.venv/bin/python run_train.py export \
-  --adapter-dir outputs/gemma4-asd-lora-r32-remix010-zh-v2
+  --adapter-dir outputs/gemma4-asd-lora-r32-code9-zh-v1
 ```
 
 `export` is now the full iOS packaging path: it merges the LoRA adapter,
@@ -327,7 +343,7 @@ tries to download it from `litert-community/gemma-4-E4B-it-litert-lm`.
 This writes:
 
 ```text
-outputs/gemma4-asd-lora-r32-remix010-zh-v2-litert-w4-audio/model.litertlm
+outputs/gemma4-asd-lora-r32-code9-zh-v1-litert-w4-audio/model.litertlm
 ```
 
 To rebuild the same output directory, add `--overwrite`.
@@ -353,7 +369,7 @@ Small one-step run without W&B:
   --gradient-accumulation-steps 1 \
   --eval-steps 1 \
   --save-steps 1 \
-  --prediction-max-new-tokens 96
+  --prediction-max-new-tokens 16
 ```
 
 ## Performance Notes

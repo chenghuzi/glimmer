@@ -1,11 +1,25 @@
-Inspect the provided video and audio. Predict whether each canonical behavior feature defined in the system message is observed.
+Inspect the provided video and audio. Predict whether each canonical behavior feature B01 through B09 is observed.
 
-Output exactly one JSON object in this shape:
-{"schema_version":"1.0","features":{"B01":false,"B02":false,"B03":false,"B04":false,"B05":false,"B06":false,"B07":false,"B08":false,"B09":false,"B10":true},"overall":"background"}
+Output exactly one line containing a 9-character binary code.
+
+Required format:
+^[01]{9}$
+
+Position order:
+1. B01
+2. B02
+3. B03
+4. B04
+5. B05
+6. B06
+7. B07
+8. B08
+9. B09
 
 Rules:
-- Use boolean values only.
-- Keep feature key order B01, B02, B03, B04, B05, B06, B07, B08, B09, B10.
-- Set B10 to true only when none of B01 through B09 are observed; otherwise set B10 to false.
-- Set `overall` to `background` when B10 is true; otherwise set it to `behavior_features_observed`.
-- Do not add explanations, markdown, confidence values, or text outside the JSON object.
+- Use 1 when the behavior feature is observed.
+- Use 0 when the behavior feature is not observed.
+- Do not output B10.
+- Do not output JSON.
+- Do not output labels, spaces, punctuation, markdown, confidence values, or explanations.
+- The complete response must be exactly 9 characters long.

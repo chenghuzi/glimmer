@@ -49,6 +49,7 @@ Each row includes:
 - `audio_path`
 - `label_vector`
 - `labels`
+- `target_code`
 - `target_json`
 
 Canonical labels are `B01` through `B10`:
@@ -64,7 +65,21 @@ Canonical labels are `B01` through `B10`:
 - `B09`: Upper Limb Stereotypies
 - `B10`: Background
 
-The supervised output is strict JSON:
+The supervised assistant output is a strict 9-bit code for `B01` through `B09`:
+
+```text
+000000000
+```
+
+It must match:
+
+```text
+^[01]{9}$
+```
+
+`B10` is not predicted by the model. It is derived by the application: `B10=true` only when `B01` through `B09` are all `0`.
+
+`target_json` is retained as the final app-report reference:
 
 ```json
 {"schema_version":"1.0","features":{"B01":false,"B02":false,"B03":false,"B04":false,"B05":false,"B06":false,"B07":false,"B08":false,"B09":true,"B10":false},"overall":"behavior_features_observed"}
@@ -115,7 +130,7 @@ For serious runs, build cache first:
 
 ```bash
 ./.venv/bin/python run_train.py build-cache \
-  --cache-dir outputs/asd_ds_processor_cache \
+  --cache-dir outputs/asd_ds_processor_cache_code9 \
   --prompt-lang en \
   --workers 8 \
   --frame-fps 1.0 \
@@ -129,7 +144,7 @@ For serious runs, build cache first:
 Then train with:
 
 ```bash
---cache-dir outputs/asd_ds_processor_cache \
+--cache-dir outputs/asd_ds_processor_cache_code9 \
 --cache-mode require
 ```
 

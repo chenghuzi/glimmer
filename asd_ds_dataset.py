@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -77,6 +78,8 @@ LABEL_COLUMNS = tuple(spec["column"] for spec in FEATURE_SPECS)
 FEATURE_ID_TO_COLUMN = {spec["id"]: spec["column"] for spec in FEATURE_SPECS}
 FEATURE_ID_TO_SLUG = {spec["id"]: spec["slug"] for spec in FEATURE_SPECS}
 BACKGROUND_FEATURE_ID = "B10"
+BEHAVIOR_FEATURE_IDS = FEATURE_IDS[:-1]
+LABEL_CODE_RE = re.compile(r"^[01]{9}$")
 
 
 HF_FEATURES = Features(
@@ -94,6 +97,7 @@ HF_FEATURES = Features(
         "labels": {feature_id: Value("bool") for feature_id in FEATURE_IDS},
         "positive_feature_ids": Sequence(Value("string")),
         "positive_label_names": Sequence(Value("string")),
+        "target_code": Value("string"),
         "target_json": Value("string"),
     }
 )
@@ -119,7 +123,7 @@ def parse_video_id(video_id: str) -> tuple[str, int, int]:
 
 
 def build_target_json(labels: dict[str, bool]) -> str:
-    """Build the supervised assistant target for one sample."""
+    """Build the final app-report reference JSON for one sample."""
     overall = "background" if labels[BACKGROUND_FEATURE_ID] else "behavior_features_observed"
     payload = {
         "schema_version": SCHEMA_VERSION,
@@ -127,6 +131,30 @@ def build_target_json(labels: dict[str, bool]) -> str:
         "overall": overall,
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def build_target_code(labels: dict[str, bool]) -> str:
+    """Build the supervised assistant target code for B01 through B09."""
+    return "".join("1" if labels[feature_id] else "0" for feature_id in BEHAVIOR_FEATURE_IDS)
+
+
+def build_report_from_code(code: str) -> dict:
+    """Build the final report JSON object from a strict 9-bit B01-B09 code."""
+    if LABEL_CODE_RE.fullmatch(code) is None:
+        raise ValueError(f"Invalid label code: {code!r}")
+
+    behavior_values = [char == "1" for char in code]
+    background = not any(behavior_values)
+    features = {
+        feature_id: value
+        for feature_id, value in zip(BEHAVIOR_FEATURE_IDS, behavior_values, strict=True)
+    }
+    features[BACKGROUND_FEATURE_ID] = background
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "features": features,
+        "overall": "background" if background else "behavior_features_observed",
+    }
 
 
 def load_asd_ds(
@@ -138,8 +166,8 @@ def load_asd_ds(
     """Load ASD-DS as an in-memory Hugging Face DatasetDict.
 
     This function does not decode media and does not write to the raw dataset.
-    Returned rows carry file paths, parsed clip timing, canonical labels, and the
-    deterministic JSON target string for supervised fine-tuning.
+    Returned rows carry file paths, parsed clip timing, canonical labels, the
+    deterministic 9-bit assistant target code, and final JSON report reference.
     """
     root = Path(root)
     split_names = tuple(splits)
@@ -199,13 +227,16 @@ def _load_split_records(root: Path, split: str, *, validate: bool) -> list[dict]
                 label_vector.append(label_int)
                 labels[feature_id] = bool(label_int)
 
-            if validate and labels[BACKGROUND_FEATURE_ID] and sum(label_vector) != 1:
-                raise ValueError(f"Background is not mutually exclusive for {video_id}")
+            behavior_sum = sum(label_vector[:-1])
+            expected_background = behavior_sum == 0
+            if validate and labels[BACKGROUND_FEATURE_ID] != expected_background:
+                raise ValueError(f"Background is not derived correctly for {video_id}")
 
             positive_feature_ids = [
                 feature_id for feature_id, label_int in zip(FEATURE_IDS, label_vector, strict=True) if label_int
             ]
             positive_label_names = [FEATURE_ID_TO_COLUMN[feature_id] for feature_id in positive_feature_ids]
+            target_code = build_target_code(labels)
 
             records.append(
                 {
@@ -222,6 +253,7 @@ def _load_split_records(root: Path, split: str, *, validate: bool) -> list[dict]
                     "labels": labels,
                     "positive_feature_ids": positive_feature_ids,
                     "positive_label_names": positive_label_names,
+                    "target_code": target_code,
                     "target_json": build_target_json(labels),
                 }
             )

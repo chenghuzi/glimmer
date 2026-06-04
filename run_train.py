@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from transformers.trainer_callback import TrainerCallback
 
-from asd_ds_dataset import FEATURE_ID_TO_COLUMN, FEATURE_IDS, load_asd_ds
+from asd_ds_dataset import FEATURE_ID_TO_COLUMN, FEATURE_IDS, LABEL_CODE_RE, build_report_from_code, load_asd_ds
 
 
 DEFAULT_DATA_ROOT = "data/raw/ASD-DS"
@@ -45,7 +45,7 @@ REQUIRED_FINAL_LITERT_MODEL_TYPES = (
     "tf_lite_vision_adapter",
     "tf_lite_prefill_decode",
 )
-CACHE_VERSION = "gemma4_asd_ds_processor_cache_v1"
+CACHE_VERSION = "gemma4_asd_ds_processor_cache_v2_code9"
 CACHE_KINDS = ("supervised", "prompt")
 LANGUAGE_LORA_REGEX = (
     r".*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$"
@@ -189,6 +189,8 @@ def smoke_test(
     click.echo(f"full_text_chars:   {len(full_text)}")
     click.echo("prompt_text_preview:")
     click.echo(indent_preview(prompt_text))
+    click.echo("target_code:")
+    click.echo(row["target_code"])
     click.echo("target_json:")
     click.echo(row["target_json"])
 
@@ -206,6 +208,7 @@ def smoke_test(
     click.echo("\n== Decoded supervised label text ==")
     click.echo(decoded_label_text)
 
+    assert_label_code(row)
     assert_label_payload(row["target_json"])
     click.echo("\nSMOKE TEST PASSED")
 
@@ -414,7 +417,7 @@ def build_cache(
     help="'language', 'all-linear', or comma-separated PEFT target module names/regex.",
 )
 @click.option("--max-memory-per-gpu", default="22GiB", show_default=True)
-@click.option("--prediction-max-new-tokens", default=256, show_default=True, type=click.IntRange(min=16))
+@click.option("--prediction-max-new-tokens", default=16, show_default=True, type=click.IntRange(min=1))
 @click.option("--generated-metrics/--no-generated-metrics", default=True, show_default=True)
 @click.option("--bf16/--no-bf16", default=True, show_default=True)
 @click.option("--gradient-checkpointing/--no-gradient-checkpointing", default=True, show_default=True)
@@ -1186,7 +1189,7 @@ def smoke_test_litert_lm(litertlm_file: Path, *, backend: str) -> None:
             "run",
             str(litertlm_file),
             f"--backend={backend}",
-            "--prompt=Return {\"features\":{\"example\":false}} and nothing else.",
+            "--prompt=Return exactly 000000000 and nothing else.",
         ]
     )
 
@@ -1297,7 +1300,7 @@ class GeneratedMetricsCallback(TrainerCallback):
 
 
 class GeneratedMetricsEvaluator:
-    """Generate JSON labels and save per-label F1 metrics, plots, and predictions."""
+    """Generate label codes and save per-label F1 metrics, plots, and predictions."""
 
     def __init__(
         self,
@@ -1383,10 +1386,14 @@ class GeneratedMetricsEvaluator:
                     generated_ids[0][prompt_len:],
                     skip_special_tokens=True,
                 ).strip()
-                parsed = parse_generated_label_vector(generated_text)
+                parsed = parse_generated_label_code(generated_text)
                 truth = [int(value) for value in row["label_vector"]]
                 y_true.append(truth)
-                y_pred.append(parsed["label_vector"])
+                y_pred.append(
+                    parsed["label_vector"]
+                    if parsed["parse_ok"]
+                    else invalid_failure_label_vector(truth)
+                )
 
                 record = {
                     "split": split_name,
@@ -1394,9 +1401,12 @@ class GeneratedMetricsEvaluator:
                     "epoch": epoch,
                     "index": index,
                     "video_id": row["video_id"],
+                    "target_label_code": row["target_code"],
+                    "predicted_label_code": parsed["label_code"],
                     "target_label_vector": truth,
                     "predicted_label_vector": parsed["label_vector"],
                     "target_json": row["target_json"],
+                    "predicted_json": parsed["report_json"],
                     "raw_prediction": generated_text,
                     "parse_ok": parsed["parse_ok"],
                     "parse_error": parsed["parse_error"],
@@ -1492,7 +1502,7 @@ class ProcessorCache:
                 "split": split,
                 "row_idx": row_idx,
                 "video_id": row["video_id"],
-                "target_json": row["target_json"] if kind == "supervised" else None,
+                "target_code": row["target_code"] if kind == "supervised" else None,
             }
         )[:12]
         return self.root / split / kind / f"{row_idx:05d}_{video_id}_{row_hash}.pt"
@@ -1576,6 +1586,7 @@ def build_cache_config(
         "max_frames": int(max_frames),
         "max_audio_seconds": float(max_audio_seconds),
         "image_width": int(image_width),
+        "target_format": "code9_b01_b09",
         "prompt_lang": prompts.lang,
         "system_prompt_sha256": hashlib.sha256(prompts.system.encode("utf-8")).hexdigest(),
         "user_prompt_sha256": hashlib.sha256(prompts.user.encode("utf-8")).hexdigest(),
@@ -1962,6 +1973,7 @@ def build_supervised_inputs(
 ) -> dict[str, Any]:
     from transformers.video_utils import VideoMetadata
 
+    assert_label_code(row)
     frames = load_video_frames(
         ffmpeg=ffmpeg,
         video_path=Path(row["video_path"]),
@@ -2122,62 +2134,36 @@ def normalize_torch_device(value: Any) -> Any:
     return torch.device("cpu")
 
 
-def parse_generated_label_vector(text: str) -> dict[str, Any]:
-    try:
-        payload = extract_json_payload(text)
-        if "features" in payload and isinstance(payload["features"], dict):
-            features = payload["features"]
-        elif "labels" in payload and isinstance(payload["labels"], dict):
-            features = payload["labels"]
-        else:
-            features = payload
-
-        label_vector = [coerce_label_value(features[feature_id]) for feature_id in FEATURE_IDS]
-        return {
-            "parse_ok": True,
-            "parse_error": None,
-            "label_vector": label_vector,
-        }
-    except Exception as exc:
+def parse_generated_label_code(text: str) -> dict[str, Any]:
+    code = text.strip()
+    if LABEL_CODE_RE.fullmatch(code) is None:
         return {
             "parse_ok": False,
-            "parse_error": str(exc),
-            "label_vector": [0 for _ in FEATURE_IDS],
+            "parse_error": f"Output does not match ^[01]{{9}}$: {text!r}",
+            "label_code": None,
+            "label_vector": None,
+            "report_json": None,
         }
 
-
-def extract_json_payload(text: str) -> dict[str, Any]:
-    cleaned = text.strip()
-    if cleaned.startswith("```"):
-        cleaned = cleaned.strip("`").strip()
-        if cleaned.lower().startswith("json"):
-            cleaned = cleaned[4:].strip()
-
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start < 0 or end <= start:
-        raise ValueError("No JSON object found in model output")
-
-    payload = json.loads(cleaned[start : end + 1])
-    if not isinstance(payload, dict):
-        raise ValueError("Generated JSON root must be an object")
-    return payload
+    report = build_report_from_code(code)
+    label_vector = [int(bool(report["features"][feature_id])) for feature_id in FEATURE_IDS]
+    return {
+        "parse_ok": True,
+        "parse_error": None,
+        "label_code": code,
+        "label_vector": label_vector,
+        "report_json": report,
+    }
 
 
-def coerce_label_value(value: Any) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return int(value != 0)
-    if isinstance(value, float):
-        return int(value != 0.0)
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "yes", "1", "positive", "present"}:
-            return 1
-        if normalized in {"false", "no", "0", "negative", "absent"}:
-            return 0
-    raise ValueError(f"Unsupported label value: {value!r}")
+def parse_generated_label_vector(text: str) -> dict[str, Any]:
+    """Backward-compatible wrapper for older eval callers."""
+    return parse_generated_label_code(text)
+
+
+def invalid_failure_label_vector(truth: list[int]) -> list[int]:
+    """Return a metric-only vector that makes every label wrong for invalid output."""
+    return [0 if int(value) else 1 for value in truth]
 
 
 def compute_multilabel_metrics(
@@ -2193,12 +2179,24 @@ def compute_multilabel_metrics(
         raise ValueError(f"Prediction shape mismatch: {y_true.shape} != {y_pred.shape}")
     if y_true.ndim != 2 or y_true.shape[1] != len(FEATURE_IDS):
         raise ValueError(f"Expected label matrix with {len(FEATURE_IDS)} columns, got {y_true.shape}")
+    if len(parse_ok) != int(y_true.shape[0]):
+        raise ValueError(f"parse_ok length mismatch: {len(parse_ok)} != {y_true.shape[0]}")
 
-    tp = ((y_true == 1) & (y_pred == 1)).sum(axis=0)
-    fp = ((y_true == 0) & (y_pred == 1)).sum(axis=0)
-    fn = ((y_true == 1) & (y_pred == 0)).sum(axis=0)
-    tn = ((y_true == 0) & (y_pred == 0)).sum(axis=0)
-    support = y_true.sum(axis=0)
+    parse_mask = np.asarray(parse_ok, dtype=bool)
+    valid_y_true = y_true[parse_mask]
+    valid_y_pred = y_pred[parse_mask]
+    if valid_y_true.shape[0]:
+        tp = ((valid_y_true == 1) & (valid_y_pred == 1)).sum(axis=0)
+        fp = ((valid_y_true == 0) & (valid_y_pred == 1)).sum(axis=0)
+        fn = ((valid_y_true == 1) & (valid_y_pred == 0)).sum(axis=0)
+        tn = ((valid_y_true == 0) & (valid_y_pred == 0)).sum(axis=0)
+        support = valid_y_true.sum(axis=0)
+    else:
+        tp = np.zeros(len(FEATURE_IDS), dtype=np.int64)
+        fp = np.zeros(len(FEATURE_IDS), dtype=np.int64)
+        fn = np.zeros(len(FEATURE_IDS), dtype=np.int64)
+        tn = np.zeros(len(FEATURE_IDS), dtype=np.int64)
+        support = np.zeros(len(FEATURE_IDS), dtype=np.int64)
 
     per_label = {}
     for index, feature_id in enumerate(FEATURE_IDS):
@@ -2222,16 +2220,20 @@ def compute_multilabel_metrics(
     macro_precision = float(np.mean([values["precision"] for values in per_label.values()]))
     macro_recall = float(np.mean([values["recall"] for values in per_label.values()]))
     macro_f1 = float(np.mean([values["f1"] for values in per_label.values()]))
+    valid_row_matches = np.all(y_true == y_pred, axis=1) & parse_mask if y_true.shape[0] else np.asarray([])
+    valid_label_matches = (y_true == y_pred) & parse_mask[:, None] if y_true.shape[0] else np.asarray([])
 
     return {
         "split": split_name,
         "step": step,
         "epoch": epoch,
         "num_samples": int(y_true.shape[0]),
+        "num_valid": int(parse_mask.sum()),
+        "num_invalid": int((~parse_mask).sum()),
         "num_labels": len(FEATURE_IDS),
-        "parse_rate": float(np.mean(np.asarray(parse_ok, dtype=np.float32))) if parse_ok else 0.0,
-        "exact_match": float(np.mean(np.all(y_true == y_pred, axis=1))) if y_true.shape[0] else 0.0,
-        "hamming_accuracy": float(np.mean(y_true == y_pred)) if y_true.size else 0.0,
+        "parse_rate": float(np.mean(parse_mask.astype(np.float32))) if parse_ok else 0.0,
+        "exact_match": float(np.mean(valid_row_matches)) if y_true.shape[0] else 0.0,
+        "hamming_accuracy": float(valid_label_matches.sum() / y_true.size) if y_true.size else 0.0,
         "micro": {
             "precision": micro_precision,
             "recall": micro_recall,
@@ -2335,7 +2337,7 @@ def build_chat_text(processor, row: dict, *, prompts: PromptBundle, include_answ
         },
     ]
     if include_answer:
-        messages.append({"role": "assistant", "content": row["target_json"]})
+        messages.append({"role": "assistant", "content": row["target_code"]})
         return processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
 
     return processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -2386,6 +2388,20 @@ def assert_label_payload(target_json: str) -> None:
         raise click.ClickException(f"Unexpected target_json feature order: {feature_keys}")
     if not all(isinstance(value, bool) for value in payload["features"].values()):
         raise click.ClickException("target_json features must all be booleans")
+
+
+def assert_label_code(row: dict) -> None:
+    code = str(row["target_code"])
+    if LABEL_CODE_RE.fullmatch(code) is None:
+        raise click.ClickException(f"Invalid target_code: {code!r}")
+
+    truth = [int(value) for value in row["label_vector"]]
+    expected = [int(char) for char in code]
+    expected.append(1 if sum(expected) == 0 else 0)
+    if truth != expected:
+        raise click.ClickException(
+            f"target_code does not match label_vector: code={code} expected={expected} truth={truth}"
+        )
 
 
 if __name__ == "__main__":

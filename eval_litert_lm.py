@@ -20,9 +20,10 @@ from run_train import (
     FEATURE_IDS,
     compute_multilabel_metrics,
     find_tool,
+    invalid_failure_label_vector,
     load_prompt_bundle,
     load_video_frames,
-    parse_generated_label_vector,
+    parse_generated_label_code,
     requested_frame_count,
     run_command,
     sanitize_cache_name,
@@ -203,19 +204,26 @@ def main(
                     audio_path=media["audio_path"],
                     sampler_config=sampler_config,
                 )
-                parsed = parse_generated_label_vector(response_text)
+                parsed = parse_generated_label_code(response_text)
                 truth = [int(value) for value in row["label_vector"]]
                 y_true.append(truth)
-                y_pred.append(parsed["label_vector"])
+                y_pred.append(
+                    parsed["label_vector"]
+                    if parsed["parse_ok"]
+                    else invalid_failure_label_vector(truth)
+                )
 
                 record = {
                     "split": split,
                     "run_id": run_id,
                     "index": start_index + index,
                     "video_id": row["video_id"],
+                    "target_label_code": row["target_code"],
+                    "predicted_label_code": parsed["label_code"],
                     "target_label_vector": truth,
                     "predicted_label_vector": parsed["label_vector"],
                     "target_json": row["target_json"],
+                    "predicted_json": parsed["report_json"],
                     "raw_prediction": response_text,
                     "parse_ok": parsed["parse_ok"],
                     "parse_error": parsed["parse_error"],
@@ -472,7 +480,15 @@ def run_parallel_eval(
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     y_true = np.asarray([record["target_label_vector"] for record in records], dtype=np.int64)
-    y_pred = np.asarray([record["predicted_label_vector"] for record in records], dtype=np.int64)
+    y_pred = np.asarray(
+        [
+            record["predicted_label_vector"]
+            if record["parse_ok"]
+            else invalid_failure_label_vector(record["target_label_vector"])
+            for record in records
+        ],
+        dtype=np.int64,
+    )
     metrics = compute_multilabel_metrics(
         y_true=y_true,
         y_pred=y_pred,
