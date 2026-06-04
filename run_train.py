@@ -814,6 +814,51 @@ def eval_hf(
     )
 
 
+@cli.command("merge")
+@click.option("--cuda-devices", default="1,2,3", show_default=True, help="Physical CUDA device IDs for merging.")
+@click.option("--model-dir", default=DEFAULT_MODEL_DIR, show_default=True, type=click.Path(path_type=Path))
+@click.option("--adapter-dir", required=True, type=click.Path(path_type=Path))
+@click.option("--merged-model-dir", required=True, type=click.Path(path_type=Path))
+@click.option("--max-memory-per-gpu", default="22GiB", show_default=True)
+@click.option("--bf16/--no-bf16", default=True, show_default=True)
+@click.option("--overwrite/--no-overwrite", default=False, show_default=True)
+def merge_model(
+    cuda_devices: str,
+    model_dir: Path,
+    adapter_dir: Path,
+    merged_model_dir: Path,
+    max_memory_per_gpu: str,
+    bf16: bool,
+    overwrite: bool,
+) -> None:
+    """Merge a LoRA adapter into a Hugging Face model directory."""
+    configure_runtime(cuda_devices)
+    adapter_dir = adapter_dir.expanduser()
+    merged_model_dir = merged_model_dir.expanduser()
+
+    validate_existing_adapter_dir(adapter_dir)
+    should_merge = prepare_merged_output_dir(merged_model_dir, overwrite=overwrite)
+
+    click.echo("== Merge setup ==")
+    click.echo(f"model_dir: {model_dir}")
+    click.echo(f"adapter_dir: {adapter_dir}")
+    click.echo(f"merged_model_dir: {merged_model_dir}")
+
+    if should_merge:
+        merge_lora_adapter(
+            model_dir=model_dir,
+            adapter_dir=adapter_dir,
+            merged_model_dir=merged_model_dir,
+            max_memory_per_gpu=max_memory_per_gpu,
+            bf16=bf16,
+        )
+    else:
+        click.echo(f"Reusing existing merged HF model at {merged_model_dir}")
+
+    click.echo("MERGE DONE")
+    click.echo(f"merged_model_dir: {merged_model_dir}")
+
+
 @cli.command("export")
 @click.option("--cuda-devices", default="1,2,3", show_default=True, help="Physical CUDA device IDs for merging.")
 @click.option("--model-dir", default=DEFAULT_MODEL_DIR, show_default=True, type=click.Path(path_type=Path))
@@ -1140,10 +1185,18 @@ def export_text_vision_litert_lm(
         "--export_vision_encoder",
         f"--jinja_chat_template_override={DEFAULT_LITERT_TEMPLATE_OVERRIDE}",
     ]
-    if quantization_recipe is not None:
-        command.append(f"--quantization_recipe={quantization_recipe}")
-    if vision_encoder_quantization_recipe is not None:
-        command.append(f"--vision_encoder_quantization_recipe={vision_encoder_quantization_recipe}")
+    command.append(
+        "--quantization_recipe="
+        + (quantization_recipe if quantization_recipe is not None else "False")
+    )
+    command.append(
+        "--vision_encoder_quantization_recipe="
+        + (
+            vision_encoder_quantization_recipe
+            if vision_encoder_quantization_recipe is not None
+            else "False"
+        )
+    )
 
     click.echo("== Exporting text+vision LiteRT-LM package ==")
     click.echo(" ".join(command))

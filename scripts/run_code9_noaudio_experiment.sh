@@ -8,8 +8,11 @@ PY="${PY:-./.venv/bin/python}"
 MODEL_DIR="${MODEL_DIR:-/home/huzi/Downloads/gemma-4-E4B-it}"
 DATA_ROOT="${DATA_ROOT:-data/raw/ASD-DS}"
 PROMPT_LANG="${PROMPT_LANG:-zh}"
+LORA_R="${LORA_R:-32}"
+LORA_ALPHA="${LORA_ALPHA:-64}"
+LORA_DROPOUT="${LORA_DROPOUT:-0.05}"
 
-RUN_NAME="${RUN_NAME:-gemma4-asd-lora-r32-code9-${PROMPT_LANG}-examples-noaudio-v1}"
+RUN_NAME="${RUN_NAME:-gemma4-asd-lora-r${LORA_R}-code9-${PROMPT_LANG}-examples-noaudio-v1}"
 OUTPUT_DIR="${OUTPUT_DIR:-outputs/${RUN_NAME}}"
 CACHE_DIR="${CACHE_DIR:-outputs/asd_ds_processor_cache_code9_examples_noaudio}"
 MERGED_DIR="${MERGED_DIR:-outputs/${RUN_NAME}-merged}"
@@ -21,9 +24,13 @@ W4_EVAL_DIR="${W4_EVAL_DIR:-${LITERT_W4_DIR}/generated_metrics_noaudio}"
 REPORT_DIR="${REPORT_DIR:-outputs/${RUN_NAME}-reports}"
 
 CACHE_WORKERS="${CACHE_WORKERS:-8}"
-TRAIN_CUDA_DEVICES="${TRAIN_CUDA_DEVICES:-2,3}"
-EXPORT_CUDA_DEVICES="${EXPORT_CUDA_DEVICES:-2,3}"
-HF_EVAL_CUDA_DEVICES="${HF_EVAL_CUDA_DEVICES:-2,3}"
+TRAIN_PHYSICAL_CUDA_DEVICES="${TRAIN_PHYSICAL_CUDA_DEVICES:-2,3}"
+TRAIN_CUDA_DEVICES="${TRAIN_CUDA_DEVICES:-0,1}"
+EXPORT_PHYSICAL_CUDA_DEVICES="${EXPORT_PHYSICAL_CUDA_DEVICES:-2,3}"
+EXPORT_CUDA_DEVICES="${EXPORT_CUDA_DEVICES:-0,1}"
+HF_EVAL_PHYSICAL_CUDA_DEVICES="${HF_EVAL_PHYSICAL_CUDA_DEVICES:-2,3}"
+HF_EVAL_CUDA_DEVICES="${HF_EVAL_CUDA_DEVICES:-0,1}"
+LITERT_PHYSICAL_CUDA_DEVICES="${LITERT_PHYSICAL_CUDA_DEVICES:-2,3}"
 
 FRAME_FPS="${FRAME_FPS:-1.0}"
 MAX_FRAMES="${MAX_FRAMES:-16}"
@@ -100,7 +107,7 @@ fi
 if [[ "$SKIP_TRAIN" == "1" ]]; then
   echo "Skipping training because SKIP_TRAIN=1"
 else
-  run "$PY" run_train.py train \
+  run env CUDA_VISIBLE_DEVICES="$TRAIN_PHYSICAL_CUDA_DEVICES" "$PY" run_train.py train \
     --cuda-devices "$TRAIN_CUDA_DEVICES" \
     --model-dir "$MODEL_DIR" \
     --data-root "$DATA_ROOT" \
@@ -129,9 +136,9 @@ else
     --max-audio-seconds "$MAX_AUDIO_SECONDS" \
     --image-width "$IMAGE_WIDTH" \
     --no-audio \
-    --lora-r 32 \
-    --lora-alpha 64 \
-    --lora-dropout 0.05 \
+    --lora-r "$LORA_R" \
+    --lora-alpha "$LORA_ALPHA" \
+    --lora-dropout "$LORA_DROPOUT" \
     --target-modules language \
     --max-memory-per-gpu 22GiB \
     --prediction-max-new-tokens "$PREDICTION_MAX_NEW_TOKENS" \
@@ -143,7 +150,7 @@ fi
 if [[ "$SKIP_FP_EXPORT" == "1" ]]; then
   echo "Skipping FP LiteRT export because SKIP_FP_EXPORT=1"
 else
-  run "$PY" run_train.py export \
+  run env CUDA_VISIBLE_DEVICES="$EXPORT_PHYSICAL_CUDA_DEVICES" "$PY" run_train.py export \
     --cuda-devices "$EXPORT_CUDA_DEVICES" \
     --model-dir "$MODEL_DIR" \
     --adapter-dir "$OUTPUT_DIR" \
@@ -159,7 +166,7 @@ fi
 if [[ "$SKIP_HF_EVAL" == "1" ]]; then
   echo "Skipping merged HF eval because SKIP_HF_EVAL=1"
 else
-  run "$PY" run_train.py eval-hf \
+  run env CUDA_VISIBLE_DEVICES="$HF_EVAL_PHYSICAL_CUDA_DEVICES" "$PY" run_train.py eval-hf \
     --cuda-devices "$HF_EVAL_CUDA_DEVICES" \
     --model-dir "$MERGED_DIR" \
     --processor-dir "$MODEL_DIR" \
@@ -183,7 +190,7 @@ fi
 if [[ "$SKIP_FP_EVAL" == "1" ]]; then
   echo "Skipping FP LiteRT eval because SKIP_FP_EVAL=1"
 else
-  run "$PY" eval_litert_lm.py \
+  run env CUDA_VISIBLE_DEVICES="$LITERT_PHYSICAL_CUDA_DEVICES" "$PY" eval_litert_lm.py \
     --litertlm-file "$LITERT_FP_DIR/model.litertlm" \
     --data-root "$DATA_ROOT" \
     --model-dir "$MODEL_DIR" \
@@ -211,7 +218,7 @@ fi
 if [[ "$SKIP_W4_EXPORT" == "1" ]]; then
   echo "Skipping W4 LiteRT export because SKIP_W4_EXPORT=1"
 else
-  run "$PY" run_train.py export \
+  run env CUDA_VISIBLE_DEVICES="$EXPORT_PHYSICAL_CUDA_DEVICES" "$PY" run_train.py export \
     --cuda-devices "$EXPORT_CUDA_DEVICES" \
     --model-dir "$MODEL_DIR" \
     --adapter-dir "$OUTPUT_DIR" \
@@ -227,7 +234,7 @@ fi
 if [[ "$SKIP_W4_EVAL" == "1" ]]; then
   echo "Skipping W4 LiteRT eval because SKIP_W4_EVAL=1"
 else
-  run "$PY" eval_litert_lm.py \
+  run env CUDA_VISIBLE_DEVICES="$LITERT_PHYSICAL_CUDA_DEVICES" "$PY" eval_litert_lm.py \
     --litertlm-file "$LITERT_W4_DIR/model.litertlm" \
     --data-root "$DATA_ROOT" \
     --model-dir "$MODEL_DIR" \
