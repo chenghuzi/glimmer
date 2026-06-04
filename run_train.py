@@ -35,16 +35,19 @@ DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE = "dynamic_wi8_afp32"
 DEFAULT_OFFICIAL_LITERT_REPO = "litert-community/gemma-4-E4B-it-litert-lm"
 DEFAULT_OFFICIAL_LITERT_FILENAME = "gemma-4-E4B-it.litertlm"
 DEFAULT_OFFICIAL_LITERT_DIR = Path("outputs/gemma4-official-litert")
-REQUIRED_FINAL_LITERT_MODEL_TYPES = (
+REQUIRED_TEXT_VISION_LITERT_MODEL_TYPES = (
     "tf_lite_embedder",
     "tf_lite_per_layer_embedder",
-    "tf_lite_audio_encoder_hw",
-    "tf_lite_audio_adapter",
-    "tf_lite_end_of_audio",
     "tf_lite_vision_encoder",
     "tf_lite_vision_adapter",
     "tf_lite_prefill_decode",
 )
+REQUIRED_AUDIO_LITERT_MODEL_TYPES = (
+    "tf_lite_audio_encoder_hw",
+    "tf_lite_audio_adapter",
+    "tf_lite_end_of_audio",
+)
+REQUIRED_FINAL_LITERT_MODEL_TYPES = REQUIRED_TEXT_VISION_LITERT_MODEL_TYPES + REQUIRED_AUDIO_LITERT_MODEL_TYPES
 CACHE_VERSION = "gemma4_asd_ds_processor_cache_v2_code9"
 CACHE_KINDS = ("supervised", "prompt")
 LANGUAGE_LORA_REGEX = (
@@ -104,6 +107,7 @@ def cli() -> None:
 @click.option("--max-audio-seconds", default=30.0, show_default=True, type=click.FloatRange(min=0.1))
 @click.option("--image-width", default=512, show_default=True, type=click.IntRange(min=64))
 @click.option("--prompt-lang", default=DEFAULT_PROMPT_LANG, show_default=True, type=click.Choice(PROMPT_LANGS))
+@click.option("--audio/--no-audio", "use_audio", default=True, show_default=True)
 def smoke_test(
     data_root: Path,
     model_dir: Path,
@@ -114,6 +118,7 @@ def smoke_test(
     max_audio_seconds: float,
     image_width: int,
     prompt_lang: str,
+    use_audio: bool,
 ) -> None:
     """Load one sample, preprocess media, and build masked training labels."""
     from transformers import AutoProcessor
@@ -126,6 +131,7 @@ def smoke_test(
     click.echo(f"ffmpeg:     {ffmpeg}")
     prompts = load_prompt_bundle(prompt_lang)
     click.echo(f"prompt_lang: {prompts.lang}")
+    click.echo(f"use_audio: {use_audio}")
 
     dataset = load_asd_ds(data_root, splits=(split,))[split]
     if row_index >= len(dataset):
@@ -142,21 +148,25 @@ def smoke_test(
         image_width=image_width,
         duration_sec=float(row["duration_sec"]),
     )
-    audio = load_audio_mono_16k(
-        ffmpeg=ffmpeg,
-        audio_path=Path(row["audio_path"]),
-        max_seconds=min(float(row["duration_sec"]), max_audio_seconds),
-    )
     click.echo("\n== Media preprocessing ==")
     click.echo(f"frames: {len(frames)}")
     click.echo(f"first_frame_size: {frames[0].size[0]}x{frames[0].size[1]}")
-    click.echo(f"audio_samples: {audio.shape[0]}")
-    click.echo(f"audio_seconds_at_16k: {audio.shape[0] / 16000:.3f}")
-    click.echo(f"audio_min_max: {audio.min():.4f}, {audio.max():.4f}")
+    audio = None
+    if use_audio:
+        audio = load_audio_mono_16k(
+            ffmpeg=ffmpeg,
+            audio_path=Path(row["audio_path"]),
+            max_seconds=min(float(row["duration_sec"]), max_audio_seconds),
+        )
+        click.echo(f"audio_samples: {audio.shape[0]}")
+        click.echo(f"audio_seconds_at_16k: {audio.shape[0] / 16000:.3f}")
+        click.echo(f"audio_min_max: {audio.min():.4f}, {audio.max():.4f}")
+    else:
+        click.echo("audio: disabled")
 
     processor = AutoProcessor.from_pretrained(model_dir, local_files_only=True)
-    prompt_text = build_chat_text(processor, row, prompts=prompts, include_answer=False)
-    full_text = build_chat_text(processor, row, prompts=prompts, include_answer=True)
+    prompt_text = build_chat_text(processor, row, prompts=prompts, include_answer=False, use_audio=use_audio)
+    full_text = build_chat_text(processor, row, prompts=prompts, include_answer=True, use_audio=use_audio)
     metadata = VideoMetadata(
         total_num_frames=len(frames),
         fps=frame_fps,
@@ -167,20 +177,18 @@ def smoke_test(
     prompt_inputs = processor(
         text=[prompt_text],
         videos=[frames],
-        audio=[audio],
         return_tensors="pt",
         return_mm_token_type_ids=True,
         videos_kwargs={"video_metadata": [metadata], "do_sample_frames": False},
-        audio_kwargs={"sampling_rate": 16000},
+        **processor_audio_kwargs(audio=audio),
     )
     full_inputs = processor(
         text=[full_text],
         videos=[frames],
-        audio=[audio],
         return_tensors="pt",
         return_mm_token_type_ids=True,
         videos_kwargs={"video_metadata": [metadata], "do_sample_frames": False},
-        audio_kwargs={"sampling_rate": 16000},
+        **processor_audio_kwargs(audio=audio),
     )
     labels = build_masked_labels(full_inputs, prompt_len=prompt_inputs["input_ids"].shape[-1])
 
@@ -240,6 +248,7 @@ def smoke_test(
 @click.option("--image-width", default=512, show_default=True, type=click.IntRange(min=64))
 @click.option("--overwrite/--no-overwrite", default=False, show_default=True)
 @click.option("--prompt-lang", default=DEFAULT_PROMPT_LANG, show_default=True, type=click.Choice(PROMPT_LANGS))
+@click.option("--audio/--no-audio", "use_audio", default=True, show_default=True)
 @click.option(
     "--workers",
     default=1,
@@ -260,6 +269,7 @@ def build_cache(
     image_width: int,
     overwrite: bool,
     prompt_lang: str,
+    use_audio: bool,
     workers: int,
 ) -> None:
     """Precompute processor batches so training does not run ffmpeg/processor per step."""
@@ -276,6 +286,7 @@ def build_cache(
             max_audio_seconds=max_audio_seconds,
             image_width=image_width,
             prompts=prompts,
+            use_audio=use_audio,
         ),
         mode="read-write",
     )
@@ -287,6 +298,7 @@ def build_cache(
     click.echo(f"cache_root: {cache_store.root}")
     click.echo(f"ffmpeg: {ffmpeg}")
     click.echo(f"prompt_lang: {prompts.lang}")
+    click.echo(f"use_audio: {use_audio}")
     click.echo(f"workers: {workers}")
     click.echo(f"splits: {', '.join(splits)}")
     click.echo(f"kinds: {', '.join(cache_kinds)}")
@@ -324,6 +336,7 @@ def build_cache(
                 max_audio_seconds=max_audio_seconds,
                 image_width=image_width,
                 prompts=prompts,
+                use_audio=use_audio,
             )
             total_written += counts["written"]
             total_existing += counts["existing"]
@@ -342,6 +355,7 @@ def build_cache(
                 max_audio_seconds,
                 image_width,
                 prompts,
+                use_audio,
             ),
         ) as executor:
             futures = [executor.submit(build_cache_row_worker, row, overwrite) for row in rows]
@@ -407,6 +421,7 @@ def build_cache(
 @click.option("--max-frames", default=16, show_default=True, type=click.IntRange(min=1))
 @click.option("--max-audio-seconds", default=30.0, show_default=True, type=click.FloatRange(min=0.1))
 @click.option("--image-width", default=512, show_default=True, type=click.IntRange(min=64))
+@click.option("--audio/--no-audio", "use_audio", default=True, show_default=True)
 @click.option("--lora-r", default=32, show_default=True, type=click.IntRange(min=1))
 @click.option("--lora-alpha", default=64, show_default=True, type=click.IntRange(min=1))
 @click.option("--lora-dropout", default=0.05, show_default=True, type=click.FloatRange(min=0, max=1))
@@ -457,6 +472,7 @@ def train(
     max_frames: int,
     max_audio_seconds: float,
     image_width: int,
+    use_audio: bool,
     lora_r: int,
     lora_alpha: int,
     lora_dropout: float,
@@ -501,6 +517,7 @@ def train(
     click.echo(f"cache_dir: {cache_dir}")
     click.echo(f"cache_mode: {cache_mode}")
     click.echo(f"prompt_lang: {prompts.lang}")
+    click.echo(f"use_audio: {use_audio}")
     click.echo(f"ffmpeg: {ffmpeg}")
 
     dataset = load_asd_ds(data_root)
@@ -540,6 +557,7 @@ def train(
                 max_audio_seconds=max_audio_seconds,
                 image_width=image_width,
                 prompts=prompts,
+                use_audio=use_audio,
             ),
             mode=cache_mode,
         )
@@ -554,6 +572,7 @@ def train(
         max_audio_seconds=max_audio_seconds,
         image_width=image_width,
         prompts=prompts,
+        use_audio=use_audio,
         cache_store=cache_store,
     )
 
@@ -618,6 +637,7 @@ def train(
             max_audio_seconds=max_audio_seconds,
             image_width=image_width,
             prompts=prompts,
+            use_audio=use_audio,
             output_dir=output_dir / "generated_metrics",
             max_new_tokens=prediction_max_new_tokens,
             wandb_enabled=wandb,
@@ -666,6 +686,134 @@ def train(
         )
 
 
+@cli.command("eval-hf")
+@click.option("--cuda-devices", default="1,2,3", show_default=True, help="Physical CUDA device IDs.")
+@click.option("--data-root", default=DEFAULT_DATA_ROOT, show_default=True, type=click.Path(path_type=Path))
+@click.option("--model-dir", required=True, type=click.Path(path_type=Path), help="Merged HF model directory to evaluate.")
+@click.option(
+    "--processor-dir",
+    default=None,
+    type=click.Path(path_type=Path),
+    help="Processor directory used for preprocessing/cache identity. Defaults to --model-dir.",
+)
+@click.option("--output-dir", required=True, type=click.Path(path_type=Path))
+@click.option("--cache-dir", default=DEFAULT_CACHE_DIR, show_default=True, type=click.Path(path_type=Path))
+@click.option(
+    "--cache-mode",
+    default="require",
+    show_default=True,
+    type=click.Choice(["off", "read-write", "require"]),
+)
+@click.option("--split", default="test", show_default=True, type=click.Choice(["validation", "test"]))
+@click.option("--prompt-lang", default=DEFAULT_PROMPT_LANG, show_default=True, type=click.Choice(PROMPT_LANGS))
+@click.option("--max-samples", default=None, type=click.IntRange(min=1))
+@click.option("--frame-fps", default=1.0, show_default=True, type=click.FloatRange(min=0.1))
+@click.option("--max-frames", default=16, show_default=True, type=click.IntRange(min=1))
+@click.option("--max-audio-seconds", default=30.0, show_default=True, type=click.FloatRange(min=0.1))
+@click.option("--image-width", default=512, show_default=True, type=click.IntRange(min=64))
+@click.option("--audio/--no-audio", "use_audio", default=True, show_default=True)
+@click.option("--prediction-max-new-tokens", default=16, show_default=True, type=click.IntRange(min=1))
+@click.option("--max-memory-per-gpu", default="22GiB", show_default=True)
+@click.option("--bf16/--no-bf16", default=True, show_default=True)
+def eval_hf(
+    cuda_devices: str,
+    data_root: Path,
+    model_dir: Path,
+    processor_dir: Path | None,
+    output_dir: Path,
+    cache_dir: Path,
+    cache_mode: str,
+    split: str,
+    prompt_lang: str,
+    max_samples: int | None,
+    frame_fps: float,
+    max_frames: int,
+    max_audio_seconds: float,
+    image_width: int,
+    use_audio: bool,
+    prediction_max_new_tokens: int,
+    max_memory_per_gpu: str,
+    bf16: bool,
+) -> None:
+    """Run generated metrics for a merged Hugging Face model."""
+    configure_runtime(cuda_devices)
+
+    import torch
+    from transformers import AutoProcessor, Gemma4ForConditionalGeneration
+
+    model_dir = model_dir.expanduser()
+    processor_dir = (processor_dir or model_dir).expanduser()
+    prompts = load_prompt_bundle(prompt_lang)
+    ffmpeg = find_tool("ffmpeg")
+
+    dataset = load_asd_ds(data_root)[split]
+    if max_samples is not None:
+        dataset = dataset.select(range(min(max_samples, len(dataset))))
+
+    click.echo("== HF generated eval setup ==")
+    click.echo(f"model_dir: {model_dir}")
+    click.echo(f"processor_dir: {processor_dir}")
+    click.echo(f"data_root: {data_root}")
+    click.echo(f"split: {split}")
+    click.echo(f"samples: {len(dataset)}")
+    click.echo(f"output_dir: {output_dir}")
+    click.echo(f"cache_dir: {cache_dir}")
+    click.echo(f"cache_mode: {cache_mode}")
+    click.echo(f"prompt_lang: {prompts.lang}")
+    click.echo(f"use_audio: {use_audio}")
+
+    processor = AutoProcessor.from_pretrained(processor_dir, local_files_only=True)
+    cache_store = None
+    if cache_mode != "off":
+        cache_store = ProcessorCache(
+            cache_dir=cache_dir,
+            config=build_cache_config(
+                model_dir=processor_dir,
+                frame_fps=frame_fps,
+                max_frames=max_frames,
+                max_audio_seconds=max_audio_seconds,
+                image_width=image_width,
+                prompts=prompts,
+                use_audio=use_audio,
+            ),
+            mode=cache_mode,
+        )
+        cache_store.write_config()
+        click.echo(f"processor_cache_root: {cache_store.root}")
+
+    max_memory = {idx: max_memory_per_gpu for idx in range(torch.cuda.device_count())}
+    model_kwargs: dict[str, Any] = {
+        "dtype": torch.bfloat16 if bf16 else torch.float16,
+        "device_map": "auto",
+        "local_files_only": True,
+    }
+    if torch.cuda.is_available():
+        model_kwargs["max_memory"] = max_memory
+    model = Gemma4ForConditionalGeneration.from_pretrained(model_dir, **model_kwargs)
+
+    evaluator = GeneratedMetricsEvaluator(
+        processor=processor,
+        ffmpeg=ffmpeg,
+        frame_fps=frame_fps,
+        max_frames=max_frames,
+        max_audio_seconds=max_audio_seconds,
+        image_width=image_width,
+        prompts=prompts,
+        use_audio=use_audio,
+        output_dir=output_dir,
+        max_new_tokens=prediction_max_new_tokens,
+        wandb_enabled=False,
+        cache_store=cache_store,
+    )
+    evaluator.evaluate(
+        model=model,
+        dataset=dataset,
+        split_name=f"{split}_hf",
+        step=0,
+        epoch=None,
+    )
+
+
 @cli.command("export")
 @click.option("--cuda-devices", default="1,2,3", show_default=True, help="Physical CUDA device IDs for merging.")
 @click.option("--model-dir", default=DEFAULT_MODEL_DIR, show_default=True, type=click.Path(path_type=Path))
@@ -688,6 +836,19 @@ def train(
 @click.option("--inspect/--no-inspect", default=True, show_default=True)
 @click.option("--smoke-test/--no-smoke-test", default=False, show_default=True)
 @click.option("--smoke-backend", default="gpu", show_default=True, type=click.Choice(["gpu", "cpu"]))
+@click.option("--audio/--no-audio", "use_audio", default=True, show_default=True)
+@click.option(
+    "--quantization-recipe",
+    default=DEFAULT_LITERT_QUANTIZATION_RECIPE,
+    show_default=True,
+    help="LiteRT text decoder quantization recipe. Use 'none' to export without quantization.",
+)
+@click.option(
+    "--vision-encoder-quantization-recipe",
+    default=DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE,
+    show_default=True,
+    help="LiteRT vision encoder quantization recipe. Use 'none' to export without quantization.",
+)
 def export_model(
     cuda_devices: str,
     model_dir: Path,
@@ -701,26 +862,39 @@ def export_model(
     inspect: bool,
     smoke_test: bool,
     smoke_backend: str,
+    use_audio: bool,
+    quantization_recipe: str,
+    vision_encoder_quantization_recipe: str,
 ) -> None:
-    """Merge a LoRA adapter and export a W4 audio+vision LiteRT-LM package."""
+    """Merge a LoRA adapter and export a LiteRT-LM package."""
     configure_runtime(cuda_devices)
     adapter_dir = adapter_dir.expanduser()
     merged_model_dir = (merged_model_dir or default_export_dir(adapter_dir, "merged")).expanduser()
-    litert_out_dir = (litert_out_dir or default_export_dir(adapter_dir, "litert-w4-audio")).expanduser()
+    quantization_recipe_value = normalize_optional_recipe(quantization_recipe)
+    vision_quantization_recipe_value = normalize_optional_recipe(vision_encoder_quantization_recipe)
+    litert_suffix = default_litert_suffix(
+        use_audio=use_audio,
+        quantization_recipe=quantization_recipe_value,
+    )
+    litert_out_dir = (litert_out_dir or default_export_dir(adapter_dir, litert_suffix)).expanduser()
 
     validate_existing_adapter_dir(adapter_dir)
     should_merge = prepare_merged_output_dir(merged_model_dir, overwrite=overwrite)
     prepare_litert_output_dir(litert_out_dir, overwrite=overwrite)
-    official_litertlm_file = ensure_official_litertlm_file(official_litertlm_file)
+    if use_audio:
+        official_litertlm_file = ensure_official_litertlm_file(official_litertlm_file)
+    else:
+        official_litertlm_file = None
 
     click.echo("== Export setup ==")
     click.echo(f"model_dir: {model_dir}")
     click.echo(f"adapter_dir: {adapter_dir}")
     click.echo(f"merged_model_dir: {merged_model_dir}")
     click.echo(f"litert_out_dir: {litert_out_dir}")
+    click.echo(f"use_audio: {use_audio}")
     click.echo(f"official_litertlm_file: {official_litertlm_file}")
-    click.echo(f"quantization_recipe: {DEFAULT_LITERT_QUANTIZATION_RECIPE}")
-    click.echo(f"vision_encoder_quantization_recipe: {DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE}")
+    click.echo(f"quantization_recipe: {quantization_recipe_value}")
+    click.echo(f"vision_encoder_quantization_recipe: {vision_quantization_recipe_value}")
 
     if should_merge:
         merge_lora_adapter(
@@ -734,24 +908,44 @@ def export_model(
         click.echo(f"Reusing existing merged HF model at {merged_model_dir}")
 
     litert_out_dir.mkdir(parents=True, exist_ok=True)
-    text_vision_out_dir = litert_out_dir / "_text_vision_export"
-    if text_vision_out_dir.exists():
-        shutil.rmtree(text_vision_out_dir)
+    if use_audio:
+        if official_litertlm_file is None:
+            raise click.ClickException("Internal error: audio export requires an official LiteRT-LM source package.")
+        text_vision_out_dir = litert_out_dir / "_text_vision_export"
+        if text_vision_out_dir.exists():
+            shutil.rmtree(text_vision_out_dir)
 
-    text_vision_litertlm_file = export_text_vision_litert_lm(
-        merged_model_dir=merged_model_dir,
-        litert_out_dir=text_vision_out_dir,
-    )
-    litertlm_file = build_audio_capable_litert_lm(
-        text_vision_litertlm_file=text_vision_litertlm_file,
-        official_litertlm_file=official_litertlm_file,
-        litert_out_dir=litert_out_dir,
-    )
-    shutil.rmtree(text_vision_out_dir, ignore_errors=True)
+        text_vision_litertlm_file = export_text_vision_litert_lm(
+            merged_model_dir=merged_model_dir,
+            litert_out_dir=text_vision_out_dir,
+            quantization_recipe=quantization_recipe_value,
+            vision_encoder_quantization_recipe=vision_quantization_recipe_value,
+        )
+        litertlm_file = build_audio_capable_litert_lm(
+            text_vision_litertlm_file=text_vision_litertlm_file,
+            official_litertlm_file=official_litertlm_file,
+            litert_out_dir=litert_out_dir,
+            quantization_recipe=quantization_recipe_value,
+            vision_encoder_quantization_recipe=vision_quantization_recipe_value,
+        )
+        shutil.rmtree(text_vision_out_dir, ignore_errors=True)
+    else:
+        litertlm_file = export_text_vision_litert_lm(
+            merged_model_dir=merged_model_dir,
+            litert_out_dir=litert_out_dir,
+            quantization_recipe=quantization_recipe_value,
+            vision_encoder_quantization_recipe=vision_quantization_recipe_value,
+        )
+        write_text_vision_export_manifest(
+            manifest_path=litert_out_dir / "export_manifest.json",
+            final_litertlm_file=litertlm_file,
+            quantization_recipe=quantization_recipe_value,
+            vision_encoder_quantization_recipe=vision_quantization_recipe_value,
+        )
 
     if inspect:
-        inspect_litert_lm(litertlm_file)
-    validate_litert_lm_sections(litertlm_file)
+        inspect_litert_lm(litertlm_file, use_audio=use_audio)
+    validate_litert_lm_sections(litertlm_file, use_audio=use_audio)
     if smoke_test:
         smoke_test_litert_lm(litertlm_file, backend=smoke_backend)
 
@@ -762,6 +956,21 @@ def export_model(
 def default_export_dir(adapter_dir: Path, suffix: str) -> Path:
     adapter_dir = adapter_dir.expanduser()
     return adapter_dir.parent / f"{adapter_dir.name}-{suffix}"
+
+
+def default_litert_suffix(*, use_audio: bool, quantization_recipe: str | None) -> str:
+    quant_label = "w4" if quantization_recipe else "fp"
+    audio_label = "audio" if use_audio else "noaudio"
+    return f"litert-{quant_label}-{audio_label}"
+
+
+def normalize_optional_recipe(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized or normalized.lower() in {"none", "null", "off", "false"}:
+        return None
+    return normalized
 
 
 def validate_existing_adapter_dir(adapter_dir: Path) -> None:
@@ -917,6 +1126,8 @@ def export_text_vision_litert_lm(
     *,
     merged_model_dir: Path,
     litert_out_dir: Path,
+    quantization_recipe: str | None,
+    vision_encoder_quantization_recipe: str | None,
 ) -> Path:
     litert_torch = find_tool("litert-torch")
     command = [
@@ -925,14 +1136,16 @@ def export_text_vision_litert_lm(
         f"--model={merged_model_dir}",
         f"--output_dir={litert_out_dir}",
         "--externalize_embedder",
-        f"--quantization_recipe={DEFAULT_LITERT_QUANTIZATION_RECIPE}",
         "--task=image_text_to_text",
         "--export_vision_encoder",
-        f"--vision_encoder_quantization_recipe={DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE}",
         f"--jinja_chat_template_override={DEFAULT_LITERT_TEMPLATE_OVERRIDE}",
     ]
+    if quantization_recipe is not None:
+        command.append(f"--quantization_recipe={quantization_recipe}")
+    if vision_encoder_quantization_recipe is not None:
+        command.append(f"--vision_encoder_quantization_recipe={vision_encoder_quantization_recipe}")
 
-    click.echo("== Exporting W4 text+vision LiteRT-LM package ==")
+    click.echo("== Exporting text+vision LiteRT-LM package ==")
     click.echo(" ".join(command))
     run_command(command, env=litert_export_env())
 
@@ -947,6 +1160,8 @@ def build_audio_capable_litert_lm(
     text_vision_litertlm_file: Path,
     official_litertlm_file: Path,
     litert_out_dir: Path,
+    quantization_recipe: str | None,
+    vision_encoder_quantization_recipe: str | None,
 ) -> Path:
     litert_lm_builder = find_tool("litert-lm-builder")
     final_litertlm_file = litert_out_dir / "model.litertlm"
@@ -985,8 +1200,10 @@ def build_audio_capable_litert_lm(
         text_vision_litertlm_file=text_vision_litertlm_file,
         official_litertlm_file=official_litertlm_file,
         final_litertlm_file=final_litertlm_file,
+        quantization_recipe=quantization_recipe,
+        vision_encoder_quantization_recipe=vision_encoder_quantization_recipe,
     )
-    validate_litert_lm_sections(final_litertlm_file)
+    validate_litert_lm_sections(final_litertlm_file, use_audio=True)
     return final_litertlm_file
 
 
@@ -1014,15 +1231,18 @@ def write_export_manifest(
     text_vision_litertlm_file: Path,
     official_litertlm_file: Path,
     final_litertlm_file: Path,
+    quantization_recipe: str | None,
+    vision_encoder_quantization_recipe: str | None,
 ) -> None:
     manifest = {
-        "format": "gemma4_asd_litert_w4_audio_export_v1",
+        "format": "gemma4_asd_litert_audio_export_v1",
         "final_litertlm_file": str(final_litertlm_file),
+        "use_audio": True,
         "text_vision_source": {
             "temporary_litertlm_file": str(text_vision_litertlm_file),
             "removed_after_packaging": True,
-            "quantization_recipe": DEFAULT_LITERT_QUANTIZATION_RECIPE,
-            "vision_encoder_quantization_recipe": DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE,
+            "quantization_recipe": quantization_recipe,
+            "vision_encoder_quantization_recipe": vision_encoder_quantization_recipe,
         },
         "audio_source": {
             "litertlm_file": str(official_litertlm_file),
@@ -1030,6 +1250,26 @@ def write_export_manifest(
             "filename": DEFAULT_OFFICIAL_LITERT_FILENAME,
         },
         "required_model_types": list(REQUIRED_FINAL_LITERT_MODEL_TYPES),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def write_text_vision_export_manifest(
+    *,
+    manifest_path: Path,
+    final_litertlm_file: Path,
+    quantization_recipe: str | None,
+    vision_encoder_quantization_recipe: str | None,
+) -> None:
+    manifest = {
+        "format": "gemma4_asd_litert_text_vision_export_v1",
+        "final_litertlm_file": str(final_litertlm_file),
+        "use_audio": False,
+        "text_vision_source": {
+            "quantization_recipe": quantization_recipe,
+            "vision_encoder_quantization_recipe": vision_encoder_quantization_recipe,
+        },
+        "required_model_types": list(required_litert_model_types(use_audio=False)),
     }
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
@@ -1153,7 +1393,7 @@ def require_tflite_dump_file(dump_dir: Path, model_type: str) -> Path:
     return matches[0]
 
 
-def inspect_litert_lm(litertlm_file: Path) -> None:
+def inspect_litert_lm(litertlm_file: Path, *, use_audio: bool) -> None:
     litert_lm_peek = find_optional_tool("litert-lm-peek")
     if litert_lm_peek is None:
         click.echo("Skipping inspection: litert-lm-peek was not found.")
@@ -1164,20 +1404,26 @@ def inspect_litert_lm(litertlm_file: Path) -> None:
     peek_path = litertlm_file.parent / "peek.txt"
     peek_path.write_text(peek_text, encoding="utf-8")
     click.echo(f"peek_file: {peek_path}")
-    for model_type in REQUIRED_FINAL_LITERT_MODEL_TYPES:
+    for model_type in required_litert_model_types(use_audio=use_audio):
         status = "ok" if model_type in peek_text else "missing"
         click.echo(f"{model_type}: {status}")
 
 
-def validate_litert_lm_sections(litertlm_file: Path) -> None:
+def validate_litert_lm_sections(litertlm_file: Path, *, use_audio: bool) -> None:
     litert_lm_peek = find_tool("litert-lm-peek")
     completed = run_command([litert_lm_peek, "--litertlm_file", str(litertlm_file)], capture_stdout=True)
     peek_text = (completed.stdout or b"").decode("utf-8", errors="replace")
-    missing = [model_type for model_type in REQUIRED_FINAL_LITERT_MODEL_TYPES if model_type not in peek_text]
+    missing = [model_type for model_type in required_litert_model_types(use_audio=use_audio) if model_type not in peek_text]
     if missing:
         raise click.ClickException(
             "LiteRT-LM package is missing required multimodal section(s): " + ", ".join(missing)
         )
+
+
+def required_litert_model_types(*, use_audio: bool) -> tuple[str, ...]:
+    if use_audio:
+        return REQUIRED_FINAL_LITERT_MODEL_TYPES
+    return REQUIRED_TEXT_VISION_LITERT_MODEL_TYPES
 
 
 def smoke_test_litert_lm(litertlm_file: Path, *, backend: str) -> None:
@@ -1237,6 +1483,7 @@ class Gemma4ASDDSCollator:
         max_audio_seconds: float,
         image_width: int,
         prompts: PromptBundle,
+        use_audio: bool,
         cache_store: "ProcessorCache | None" = None,
     ) -> None:
         self.processor = processor
@@ -1246,6 +1493,7 @@ class Gemma4ASDDSCollator:
         self.max_audio_seconds = max_audio_seconds
         self.image_width = image_width
         self.prompts = prompts
+        self.use_audio = use_audio
         self.cache_store = cache_store
 
     def __call__(self, examples: list[dict]) -> dict:
@@ -1262,6 +1510,7 @@ class Gemma4ASDDSCollator:
             max_audio_seconds=self.max_audio_seconds,
             image_width=self.image_width,
             prompts=self.prompts,
+            use_audio=self.use_audio,
         )
         if self.cache_store is None:
             return builder()
@@ -1312,6 +1561,7 @@ class GeneratedMetricsEvaluator:
         max_audio_seconds: float,
         image_width: int,
         prompts: PromptBundle,
+        use_audio: bool,
         output_dir: Path,
         max_new_tokens: int,
         wandb_enabled: bool,
@@ -1324,6 +1574,7 @@ class GeneratedMetricsEvaluator:
         self.max_audio_seconds = max_audio_seconds
         self.image_width = image_width
         self.prompts = prompts
+        self.use_audio = use_audio
         self.output_dir = output_dir
         self.max_new_tokens = max_new_tokens
         self.wandb_enabled = wandb_enabled
@@ -1369,6 +1620,7 @@ class GeneratedMetricsEvaluator:
                     max_audio_seconds=self.max_audio_seconds,
                     image_width=self.image_width,
                     prompts=self.prompts,
+                    use_audio=self.use_audio,
                 )
                 if self.cache_store is None:
                     prompt_inputs = builder()
@@ -1578,6 +1830,7 @@ def build_cache_config(
     max_audio_seconds: float,
     image_width: int,
     prompts: PromptBundle,
+    use_audio: bool,
 ) -> dict[str, Any]:
     return {
         "cache_version": CACHE_VERSION,
@@ -1586,6 +1839,7 @@ def build_cache_config(
         "max_frames": int(max_frames),
         "max_audio_seconds": float(max_audio_seconds),
         "image_width": int(image_width),
+        "use_audio": bool(use_audio),
         "target_format": "code9_b01_b09",
         "prompt_lang": prompts.lang,
         "system_prompt_sha256": hashlib.sha256(prompts.system.encode("utf-8")).hexdigest(),
@@ -1604,6 +1858,7 @@ def build_cached_kind(
     max_audio_seconds: float,
     image_width: int,
     prompts: PromptBundle,
+    use_audio: bool,
 ) -> dict[str, Any]:
     if kind == "supervised":
         return build_supervised_inputs(
@@ -1615,6 +1870,7 @@ def build_cached_kind(
             max_audio_seconds=max_audio_seconds,
             image_width=image_width,
             prompts=prompts,
+            use_audio=use_audio,
         )
     if kind == "prompt":
         return build_prompt_inputs(
@@ -1626,6 +1882,7 @@ def build_cached_kind(
             max_audio_seconds=max_audio_seconds,
             image_width=image_width,
             prompts=prompts,
+            use_audio=use_audio,
         )
     raise ValueError(f"Unknown cache kind: {kind}")
 
@@ -1641,6 +1898,7 @@ def init_cache_worker(
     max_audio_seconds: float,
     image_width: int,
     prompts: PromptBundle,
+    use_audio: bool,
 ) -> None:
     from transformers import AutoProcessor
 
@@ -1661,6 +1919,7 @@ def init_cache_worker(
             "max_audio_seconds": max_audio_seconds,
             "image_width": image_width,
             "prompts": prompts,
+            "use_audio": use_audio,
         }
     )
 
@@ -1681,6 +1940,7 @@ def build_cache_row_worker(row: dict, overwrite: bool) -> dict[str, int]:
         max_audio_seconds=_CACHE_WORKER_STATE["max_audio_seconds"],
         image_width=_CACHE_WORKER_STATE["image_width"],
         prompts=_CACHE_WORKER_STATE["prompts"],
+        use_audio=_CACHE_WORKER_STATE["use_audio"],
     )
 
 
@@ -1697,6 +1957,7 @@ def build_cache_row(
     max_audio_seconds: float,
     image_width: int,
     prompts: PromptBundle,
+    use_audio: bool,
 ) -> dict[str, int]:
     written = 0
     existing = 0
@@ -1715,6 +1976,7 @@ def build_cache_row(
                 max_audio_seconds=max_audio_seconds,
                 image_width=image_width,
                 prompts=prompts,
+                use_audio=use_audio,
             ),
         )
         if did_write:
@@ -1960,6 +2222,15 @@ def load_audio_mono_16k(*, ffmpeg: str, audio_path: Path, max_seconds: float) ->
     return audio
 
 
+def processor_audio_kwargs(*, audio: np.ndarray | None) -> dict[str, Any]:
+    if audio is None:
+        return {}
+    return {
+        "audio": [audio],
+        "audio_kwargs": {"sampling_rate": 16000},
+    }
+
+
 def build_supervised_inputs(
     *,
     processor: Any,
@@ -1970,6 +2241,7 @@ def build_supervised_inputs(
     max_audio_seconds: float,
     image_width: int,
     prompts: PromptBundle,
+    use_audio: bool,
 ) -> dict[str, Any]:
     from transformers.video_utils import VideoMetadata
 
@@ -1982,10 +2254,14 @@ def build_supervised_inputs(
         image_width=image_width,
         duration_sec=float(row["duration_sec"]),
     )
-    audio = load_audio_mono_16k(
-        ffmpeg=ffmpeg,
-        audio_path=Path(row["audio_path"]),
-        max_seconds=min(float(row["duration_sec"]), max_audio_seconds),
+    audio = (
+        load_audio_mono_16k(
+            ffmpeg=ffmpeg,
+            audio_path=Path(row["audio_path"]),
+            max_seconds=min(float(row["duration_sec"]), max_audio_seconds),
+        )
+        if use_audio
+        else None
     )
     metadata = VideoMetadata(
         total_num_frames=len(frames),
@@ -1998,30 +2274,30 @@ def build_supervised_inputs(
         row,
         prompts=prompts,
         include_answer=False,
+        use_audio=use_audio,
     )
     full_text = build_chat_text(
         processor,
         row,
         prompts=prompts,
         include_answer=True,
+        use_audio=use_audio,
     )
     prompt_inputs = processor(
         text=[prompt_text],
         videos=[frames],
-        audio=[audio],
         return_tensors="pt",
         return_mm_token_type_ids=True,
         videos_kwargs={"video_metadata": [metadata], "do_sample_frames": False},
-        audio_kwargs={"sampling_rate": 16000},
+        **processor_audio_kwargs(audio=audio),
     )
     full_inputs = processor(
         text=[full_text],
         videos=[frames],
-        audio=[audio],
         return_tensors="pt",
         return_mm_token_type_ids=True,
         videos_kwargs={"video_metadata": [metadata], "do_sample_frames": False},
-        audio_kwargs={"sampling_rate": 16000},
+        **processor_audio_kwargs(audio=audio),
     )
     full_inputs["labels"] = build_masked_labels(
         full_inputs,
@@ -2040,6 +2316,7 @@ def build_prompt_inputs(
     max_audio_seconds: float,
     image_width: int,
     prompts: PromptBundle,
+    use_audio: bool,
 ) -> dict[str, Any]:
     from transformers.video_utils import VideoMetadata
 
@@ -2051,10 +2328,14 @@ def build_prompt_inputs(
         image_width=image_width,
         duration_sec=float(row["duration_sec"]),
     )
-    audio = load_audio_mono_16k(
-        ffmpeg=ffmpeg,
-        audio_path=Path(row["audio_path"]),
-        max_seconds=min(float(row["duration_sec"]), max_audio_seconds),
+    audio = (
+        load_audio_mono_16k(
+            ffmpeg=ffmpeg,
+            audio_path=Path(row["audio_path"]),
+            max_seconds=min(float(row["duration_sec"]), max_audio_seconds),
+        )
+        if use_audio
+        else None
     )
     metadata = VideoMetadata(
         total_num_frames=len(frames),
@@ -2067,15 +2348,15 @@ def build_prompt_inputs(
         row,
         prompts=prompts,
         include_answer=False,
+        use_audio=use_audio,
     )
     return processor(
         text=[prompt_text],
         videos=[frames],
-        audio=[audio],
         return_tensors="pt",
         return_mm_token_type_ids=True,
         videos_kwargs={"video_metadata": [metadata], "do_sample_frames": False},
-        audio_kwargs={"sampling_rate": 16000},
+        **processor_audio_kwargs(audio=audio),
     )
 
 
@@ -2324,16 +2605,23 @@ def run_command(
         raise click.ClickException(f"Command failed: {' '.join(command)}\n{stderr}") from exc
 
 
-def build_chat_text(processor, row: dict, *, prompts: PromptBundle, include_answer: bool) -> str:
+def build_chat_text(
+    processor,
+    row: dict,
+    *,
+    prompts: PromptBundle,
+    include_answer: bool,
+    use_audio: bool,
+) -> str:
+    user_content = [{"type": "video"}]
+    if use_audio:
+        user_content.append({"type": "audio"})
+    user_content.append({"type": "text", "text": prompts.user})
     messages = [
         {"role": "system", "content": prompts.system},
         {
             "role": "user",
-            "content": [
-                {"type": "video"},
-                {"type": "audio"},
-                {"type": "text", "text": prompts.user},
-            ],
+            "content": user_content,
         },
     ]
     if include_answer:
