@@ -77,6 +77,7 @@ The supervised output is strict JSON:
 - `smoke-test`: preprocess one multimodal sample and print tensor shapes.
 - `build-cache`: precompute Gemma processor outputs so training avoids per-step ffmpeg/processor work.
 - `train`: BF16 LoRA fine-tuning with validation loss, generated validation metrics, final validation metrics, and final test metrics.
+- `export`: one-command merge plus W4 LiteRT-LM packaging with text, vision, and audio sections.
 
 Prompt language is selected with `--prompt-lang en` or `--prompt-lang zh`. Prompt text is loaded from external Markdown files:
 
@@ -101,9 +102,10 @@ audio encoder or audio adapter. The target-module regex is limited to
 ```
 
 Therefore audio encoder weights remain base Gemma 4. If building an
-audio-capable LiteRT-LM package, grafting official base Gemma 4 audio sections
-into the fine-tuned package is technically plausible, but the resulting package
-must still be evaluated before trusting behavior-label metrics.
+audio-capable LiteRT-LM package, `run_train.py export` grafts official base
+Gemma 4 audio sections into the fine-tuned W4 text/vision package and validates
+that text, vision, and audio sections are present. The resulting package must
+still be evaluated before trusting behavior-label metrics.
 
 Current collator supports batch size 1 only. Keep `per-device-train-batch-size=1` and scale effective batch size with `gradient-accumulation-steps`.
 

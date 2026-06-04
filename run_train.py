@@ -30,7 +30,21 @@ DEFAULT_CACHE_DIR = "outputs/asd_ds_processor_cache"
 DEFAULT_WANDB_PROJECT = "gemma4-asd-ft"
 DEFAULT_RUN_NAME = "gemma4-asd-lora-r32"
 DEFAULT_LITERT_TEMPLATE_OVERRIDE = "litert-community/gemma-4-E4B-it-litert-lm"
-DEFAULT_LITERT_QUANTIZATION_RECIPE = "dynamic_wi8_afp32"
+DEFAULT_LITERT_QUANTIZATION_RECIPE = "dynamic_wi4_afp32"
+DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE = "dynamic_wi8_afp32"
+DEFAULT_OFFICIAL_LITERT_REPO = "litert-community/gemma-4-E4B-it-litert-lm"
+DEFAULT_OFFICIAL_LITERT_FILENAME = "gemma-4-E4B-it.litertlm"
+DEFAULT_OFFICIAL_LITERT_DIR = Path("outputs/gemma4-official-litert")
+REQUIRED_FINAL_LITERT_MODEL_TYPES = (
+    "tf_lite_embedder",
+    "tf_lite_per_layer_embedder",
+    "tf_lite_audio_encoder_hw",
+    "tf_lite_audio_adapter",
+    "tf_lite_end_of_audio",
+    "tf_lite_vision_encoder",
+    "tf_lite_vision_adapter",
+    "tf_lite_prefill_decode",
+)
 CACHE_VERSION = "gemma4_asd_ds_processor_cache_v1"
 CACHE_KINDS = ("supervised", "prompt")
 LANGUAGE_LORA_REGEX = (
@@ -655,24 +669,19 @@ def train(
 @click.option("--adapter-dir", required=True, type=click.Path(path_type=Path))
 @click.option("--merged-model-dir", default=None, type=click.Path(path_type=Path))
 @click.option("--litert-out-dir", default=None, type=click.Path(path_type=Path))
+@click.option(
+    "--official-litertlm-file",
+    default=None,
+    type=click.Path(path_type=Path),
+    help=(
+        "Official base Gemma 4 LiteRT-LM package used as the audio-section source. "
+        "Defaults to outputs/gemma4-official-litert/gemma-4-E4B-it.litertlm, "
+        "downloading it from Hugging Face if missing."
+    ),
+)
 @click.option("--max-memory-per-gpu", default="22GiB", show_default=True)
 @click.option("--bf16/--no-bf16", default=True, show_default=True)
 @click.option("--overwrite/--no-overwrite", default=False, show_default=True)
-@click.option("--externalize-embedder/--no-externalize-embedder", default=True, show_default=True)
-@click.option("--export-vision-encoder/--no-export-vision-encoder", default=True, show_default=True)
-@click.option("--quantization-recipe", default=DEFAULT_LITERT_QUANTIZATION_RECIPE, show_default=True)
-@click.option(
-    "--vision-encoder-quantization-recipe",
-    default=DEFAULT_LITERT_QUANTIZATION_RECIPE,
-    show_default=True,
-)
-@click.option(
-    "--task",
-    default="image_text_to_text",
-    show_default=True,
-    help="LiteRT export task. Use an empty string to omit the flag.",
-)
-@click.option("--jinja-chat-template-override", default=DEFAULT_LITERT_TEMPLATE_OVERRIDE, show_default=True)
 @click.option("--inspect/--no-inspect", default=True, show_default=True)
 @click.option("--smoke-test/--no-smoke-test", default=False, show_default=True)
 @click.option("--smoke-backend", default="gpu", show_default=True, type=click.Choice(["gpu", "cpu"]))
@@ -682,36 +691,33 @@ def export_model(
     adapter_dir: Path,
     merged_model_dir: Path | None,
     litert_out_dir: Path | None,
+    official_litertlm_file: Path | None,
     max_memory_per_gpu: str,
     bf16: bool,
     overwrite: bool,
-    externalize_embedder: bool,
-    export_vision_encoder: bool,
-    quantization_recipe: str,
-    vision_encoder_quantization_recipe: str,
-    task: str,
-    jinja_chat_template_override: str,
     inspect: bool,
     smoke_test: bool,
     smoke_backend: str,
 ) -> None:
-    """Merge a LoRA adapter and export it as a LiteRT-LM package."""
+    """Merge a LoRA adapter and export a W4 audio+vision LiteRT-LM package."""
     configure_runtime(cuda_devices)
     adapter_dir = adapter_dir.expanduser()
     merged_model_dir = (merged_model_dir or default_export_dir(adapter_dir, "merged")).expanduser()
-    litert_out_dir = (litert_out_dir or default_export_dir(adapter_dir, "litert")).expanduser()
+    litert_out_dir = (litert_out_dir or default_export_dir(adapter_dir, "litert-w4-audio")).expanduser()
 
     validate_existing_adapter_dir(adapter_dir)
     should_merge = prepare_merged_output_dir(merged_model_dir, overwrite=overwrite)
     prepare_litert_output_dir(litert_out_dir, overwrite=overwrite)
+    official_litertlm_file = ensure_official_litertlm_file(official_litertlm_file)
 
     click.echo("== Export setup ==")
     click.echo(f"model_dir: {model_dir}")
     click.echo(f"adapter_dir: {adapter_dir}")
     click.echo(f"merged_model_dir: {merged_model_dir}")
     click.echo(f"litert_out_dir: {litert_out_dir}")
-    click.echo(f"quantization_recipe: {quantization_recipe}")
-    click.echo(f"vision_encoder_quantization_recipe: {vision_encoder_quantization_recipe}")
+    click.echo(f"official_litertlm_file: {official_litertlm_file}")
+    click.echo(f"quantization_recipe: {DEFAULT_LITERT_QUANTIZATION_RECIPE}")
+    click.echo(f"vision_encoder_quantization_recipe: {DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE}")
 
     if should_merge:
         merge_lora_adapter(
@@ -724,19 +730,25 @@ def export_model(
     else:
         click.echo(f"Reusing existing merged HF model at {merged_model_dir}")
 
-    litertlm_file = export_litert_lm(
+    litert_out_dir.mkdir(parents=True, exist_ok=True)
+    text_vision_out_dir = litert_out_dir / "_text_vision_export"
+    if text_vision_out_dir.exists():
+        shutil.rmtree(text_vision_out_dir)
+
+    text_vision_litertlm_file = export_text_vision_litert_lm(
         merged_model_dir=merged_model_dir,
-        litert_out_dir=litert_out_dir,
-        externalize_embedder=externalize_embedder,
-        export_vision_encoder=export_vision_encoder,
-        quantization_recipe=quantization_recipe,
-        vision_encoder_quantization_recipe=vision_encoder_quantization_recipe,
-        task=task,
-        jinja_chat_template_override=jinja_chat_template_override,
+        litert_out_dir=text_vision_out_dir,
     )
+    litertlm_file = build_audio_capable_litert_lm(
+        text_vision_litertlm_file=text_vision_litertlm_file,
+        official_litertlm_file=official_litertlm_file,
+        litert_out_dir=litert_out_dir,
+    )
+    shutil.rmtree(text_vision_out_dir, ignore_errors=True)
 
     if inspect:
         inspect_litert_lm(litertlm_file)
+    validate_litert_lm_sections(litertlm_file)
     if smoke_test:
         smoke_test_litert_lm(litertlm_file, backend=smoke_backend)
 
@@ -843,16 +855,65 @@ def merge_lora_adapter(
     click.echo(f"Saved merged HF model to {merged_model_dir}")
 
 
-def export_litert_lm(
+def ensure_official_litertlm_file(official_litertlm_file: Path | None) -> Path:
+    if official_litertlm_file is not None:
+        path = official_litertlm_file.expanduser()
+        if not path.is_file():
+            raise click.ClickException(f"--official-litertlm-file does not exist: {path}")
+        return path
+
+    default_path = DEFAULT_OFFICIAL_LITERT_DIR / DEFAULT_OFFICIAL_LITERT_FILENAME
+    if default_path.is_file():
+        return default_path
+
+    click.echo("== Downloading official Gemma 4 LiteRT-LM reference package ==")
+    click.echo(f"repo: {DEFAULT_OFFICIAL_LITERT_REPO}")
+    click.echo(f"filename: {DEFAULT_OFFICIAL_LITERT_FILENAME}")
+    DEFAULT_OFFICIAL_LITERT_DIR.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as exc:
+        raise click.ClickException(
+            "huggingface_hub is required to download the official LiteRT-LM package."
+        ) from exc
+
+    saved_env = {name: os.environ.get(name) for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")}
+    try:
+        for name in saved_env:
+            os.environ.pop(name, None)
+        downloaded = Path(
+            hf_hub_download(
+                repo_id=DEFAULT_OFFICIAL_LITERT_REPO,
+                filename=DEFAULT_OFFICIAL_LITERT_FILENAME,
+                repo_type="model",
+                local_dir=DEFAULT_OFFICIAL_LITERT_DIR,
+                local_files_only=False,
+            )
+        )
+    except Exception as exc:
+        raise click.ClickException(
+            "Could not locate or download the official Gemma 4 LiteRT-LM package. "
+            f"Expected {default_path}. You can provide it with --official-litertlm-file."
+        ) from exc
+    finally:
+        for name, value in saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    if downloaded != default_path:
+        shutil.copy2(downloaded, default_path)
+    if not default_path.is_file():
+        raise click.ClickException(f"Official LiteRT-LM download did not create {default_path}")
+    return default_path
+
+
+def export_text_vision_litert_lm(
     *,
     merged_model_dir: Path,
     litert_out_dir: Path,
-    externalize_embedder: bool,
-    export_vision_encoder: bool,
-    quantization_recipe: str,
-    vision_encoder_quantization_recipe: str,
-    task: str,
-    jinja_chat_template_override: str,
 ) -> Path:
     litert_torch = find_tool("litert-torch")
     command = [
@@ -860,23 +921,15 @@ def export_litert_lm(
         "export_hf",
         f"--model={merged_model_dir}",
         f"--output_dir={litert_out_dir}",
+        "--externalize_embedder",
+        f"--quantization_recipe={DEFAULT_LITERT_QUANTIZATION_RECIPE}",
+        "--task=image_text_to_text",
+        "--export_vision_encoder",
+        f"--vision_encoder_quantization_recipe={DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE}",
+        f"--jinja_chat_template_override={DEFAULT_LITERT_TEMPLATE_OVERRIDE}",
     ]
-    if externalize_embedder:
-        command.append("--externalize_embedder")
-    if quantization_recipe.strip():
-        command.append(f"--quantization_recipe={quantization_recipe.strip()}")
-    if task.strip():
-        command.append(f"--task={task.strip()}")
-    if export_vision_encoder:
-        command.append("--export_vision_encoder")
-    if vision_encoder_quantization_recipe.strip():
-        command.append(
-            f"--vision_encoder_quantization_recipe={vision_encoder_quantization_recipe.strip()}"
-        )
-    if jinja_chat_template_override.strip():
-        command.append(f"--jinja_chat_template_override={jinja_chat_template_override.strip()}")
 
-    click.echo("== Exporting LiteRT-LM package ==")
+    click.echo("== Exporting W4 text+vision LiteRT-LM package ==")
     click.echo(" ".join(command))
     run_command(command, env=litert_export_env())
 
@@ -886,13 +939,242 @@ def export_litert_lm(
     return litertlm_file
 
 
+def build_audio_capable_litert_lm(
+    *,
+    text_vision_litertlm_file: Path,
+    official_litertlm_file: Path,
+    litert_out_dir: Path,
+) -> Path:
+    litert_lm_builder = find_tool("litert-lm-builder")
+    final_litertlm_file = litert_out_dir / "model.litertlm"
+    with tempfile.TemporaryDirectory(prefix="litert-packaging-", dir=litert_out_dir) as tmp:
+        work_dir = Path(tmp)
+        text_vision_dump_dir = work_dir / "text_vision_dump"
+        official_dump_dir = work_dir / "official_dump"
+
+        dump_litert_lm(text_vision_litertlm_file, text_vision_dump_dir)
+        dump_litert_lm(official_litertlm_file, official_dump_dir)
+
+        model_toml = work_dir / "model.toml"
+        write_audio_hybrid_toml(
+            model_toml=model_toml,
+            text_vision_dump_dir=text_vision_dump_dir,
+            official_dump_dir=official_dump_dir,
+        )
+
+        click.echo("== Building audio-capable W4 LiteRT-LM package ==")
+        run_command(
+            [
+                litert_lm_builder,
+                "toml",
+                "--path",
+                str(model_toml),
+                "output",
+                "--path",
+                str(final_litertlm_file),
+            ]
+        )
+
+    if not final_litertlm_file.is_file():
+        raise click.ClickException(f"LiteRT-LM builder did not create expected file: {final_litertlm_file}")
+    write_export_manifest(
+        manifest_path=litert_out_dir / "export_manifest.json",
+        text_vision_litertlm_file=text_vision_litertlm_file,
+        official_litertlm_file=official_litertlm_file,
+        final_litertlm_file=final_litertlm_file,
+    )
+    validate_litert_lm_sections(final_litertlm_file)
+    return final_litertlm_file
+
+
+def dump_litert_lm(litertlm_file: Path, dump_dir: Path) -> None:
+    litert_lm_peek = find_tool("litert-lm-peek")
+    if dump_dir.exists():
+        shutil.rmtree(dump_dir)
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    completed = run_command(
+        [
+            litert_lm_peek,
+            "--litertlm_file",
+            str(litertlm_file),
+            "--dump_files_dir",
+            str(dump_dir),
+        ],
+        capture_stdout=True,
+    )
+    (dump_dir / "peek.txt").write_bytes(completed.stdout or b"")
+
+
+def write_export_manifest(
+    *,
+    manifest_path: Path,
+    text_vision_litertlm_file: Path,
+    official_litertlm_file: Path,
+    final_litertlm_file: Path,
+) -> None:
+    manifest = {
+        "format": "gemma4_asd_litert_w4_audio_export_v1",
+        "final_litertlm_file": str(final_litertlm_file),
+        "text_vision_source": {
+            "temporary_litertlm_file": str(text_vision_litertlm_file),
+            "removed_after_packaging": True,
+            "quantization_recipe": DEFAULT_LITERT_QUANTIZATION_RECIPE,
+            "vision_encoder_quantization_recipe": DEFAULT_LITERT_VISION_QUANTIZATION_RECIPE,
+        },
+        "audio_source": {
+            "litertlm_file": str(official_litertlm_file),
+            "repo": DEFAULT_OFFICIAL_LITERT_REPO,
+            "filename": DEFAULT_OFFICIAL_LITERT_FILENAME,
+        },
+        "required_model_types": list(REQUIRED_FINAL_LITERT_MODEL_TYPES),
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+
+def write_audio_hybrid_toml(
+    *,
+    model_toml: Path,
+    text_vision_dump_dir: Path,
+    official_dump_dir: Path,
+) -> None:
+    text_vision_sections = {
+        "llm_metadata": require_dump_file(text_vision_dump_dir, "LlmMetadataProto.pbtext"),
+        "tokenizer": require_tokenizer_dump_file(text_vision_dump_dir),
+        "embedder": require_tflite_dump_file(text_vision_dump_dir, "tf_lite_embedder"),
+        "per_layer_embedder": require_tflite_dump_file(text_vision_dump_dir, "tf_lite_per_layer_embedder"),
+        "vision_encoder": require_tflite_dump_file(text_vision_dump_dir, "tf_lite_vision_encoder"),
+        "vision_adapter": require_tflite_dump_file(text_vision_dump_dir, "tf_lite_vision_adapter"),
+        "prefill_decode": require_tflite_dump_file(text_vision_dump_dir, "tf_lite_prefill_decode"),
+    }
+    official_audio_sections = {
+        "audio_encoder_hw": require_tflite_dump_file(official_dump_dir, "tf_lite_audio_encoder_hw"),
+        "audio_adapter": require_tflite_dump_file(official_dump_dir, "tf_lite_audio_adapter"),
+        "end_of_audio": require_tflite_dump_file(official_dump_dir, "tf_lite_end_of_audio"),
+    }
+    tokenizer_section_type = (
+        "HF_Tokenizer" if text_vision_sections["tokenizer"].suffix == ".zlib" else "SP_Tokenizer"
+    )
+
+    lines = [
+        "[system_metadata]",
+        "entries = [",
+        '  { key = "Authors", value_type = "String", value = "ODML" },',
+        (
+            '  { key = "hybrid_source", value_type = "String", '
+            'value = "ASD LoRA W4 text/vision + official Gemma 4 E4B audio sections" },'
+        ),
+        "]",
+        "",
+        "[[section]]",
+        'section_type = "LlmMetadata"',
+        f'data_path = "{toml_path(text_vision_sections["llm_metadata"])}"',
+        "",
+        "[[section]]",
+        f'section_type = "{tokenizer_section_type}"',
+        f'data_path = "{toml_path(text_vision_sections["tokenizer"])}"',
+        "",
+    ]
+    lines.extend(tflite_toml_section("embedder", text_vision_sections["embedder"]))
+    lines.extend(tflite_toml_section("per_layer_embedder", text_vision_sections["per_layer_embedder"]))
+    lines.extend(
+        tflite_toml_section(
+            "audio_encoder_hw",
+            official_audio_sections["audio_encoder_hw"],
+            backend_constraint="cpu",
+        )
+    )
+    lines.extend(
+        tflite_toml_section(
+            "audio_adapter",
+            official_audio_sections["audio_adapter"],
+            backend_constraint="cpu",
+        )
+    )
+    lines.extend(tflite_toml_section("end_of_audio", official_audio_sections["end_of_audio"]))
+    lines.extend(tflite_toml_section("vision_encoder", text_vision_sections["vision_encoder"]))
+    lines.extend(tflite_toml_section("vision_adapter", text_vision_sections["vision_adapter"]))
+    lines.extend(tflite_toml_section("prefill_decode", text_vision_sections["prefill_decode"]))
+
+    model_toml.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def tflite_toml_section(
+    model_type: str,
+    path: Path,
+    *,
+    backend_constraint: str | None = None,
+) -> list[str]:
+    lines = [
+        "[[section]]",
+        f'model_type = "{model_type}"',
+    ]
+    if backend_constraint is not None:
+        lines.append(f'backend_constraint = "{backend_constraint}"')
+    lines.extend(
+        [
+            'section_type = "TFLiteModel"',
+            f'data_path = "{toml_path(path)}"',
+            "",
+        ]
+    )
+    return lines
+
+
+def toml_path(path: Path) -> str:
+    return str(path.resolve()).replace("\\", "\\\\").replace('"', '\\"')
+
+
+def require_dump_file(dump_dir: Path, filename: str) -> Path:
+    path = dump_dir / filename
+    if not path.is_file():
+        raise click.ClickException(f"Required LiteRT-LM dump file is missing: {path}")
+    return path
+
+
+def require_tokenizer_dump_file(dump_dir: Path) -> Path:
+    matches = sorted(dump_dir.glob("*_Tokenizer*"))
+    matches = [path for path in matches if path.suffix in {".zlib", ".spiece"}]
+    if len(matches) != 1:
+        raise click.ClickException(
+            f"Expected exactly one tokenizer dump in {dump_dir}, found {len(matches)}"
+        )
+    return matches[0]
+
+
+def require_tflite_dump_file(dump_dir: Path, model_type: str) -> Path:
+    matches = sorted(dump_dir.glob(f"*_{model_type}.tflite"))
+    if len(matches) != 1:
+        raise click.ClickException(
+            f"Expected exactly one {model_type} TFLite dump in {dump_dir}, found {len(matches)}"
+        )
+    return matches[0]
+
+
 def inspect_litert_lm(litertlm_file: Path) -> None:
     litert_lm_peek = find_optional_tool("litert-lm-peek")
     if litert_lm_peek is None:
         click.echo("Skipping inspection: litert-lm-peek was not found.")
         return
     click.echo("== Inspecting LiteRT-LM package ==")
-    run_command([litert_lm_peek, "--litertlm_file", str(litertlm_file)])
+    completed = run_command([litert_lm_peek, "--litertlm_file", str(litertlm_file)], capture_stdout=True)
+    peek_text = (completed.stdout or b"").decode("utf-8", errors="replace")
+    peek_path = litertlm_file.parent / "peek.txt"
+    peek_path.write_text(peek_text, encoding="utf-8")
+    click.echo(f"peek_file: {peek_path}")
+    for model_type in REQUIRED_FINAL_LITERT_MODEL_TYPES:
+        status = "ok" if model_type in peek_text else "missing"
+        click.echo(f"{model_type}: {status}")
+
+
+def validate_litert_lm_sections(litertlm_file: Path) -> None:
+    litert_lm_peek = find_tool("litert-lm-peek")
+    completed = run_command([litert_lm_peek, "--litertlm_file", str(litertlm_file)], capture_stdout=True)
+    peek_text = (completed.stdout or b"").decode("utf-8", errors="replace")
+    missing = [model_type for model_type in REQUIRED_FINAL_LITERT_MODEL_TYPES if model_type not in peek_text]
+    if missing:
+        raise click.ClickException(
+            "LiteRT-LM package is missing required multimodal section(s): " + ", ".join(missing)
+        )
 
 
 def smoke_test_litert_lm(litertlm_file: Path, *, backend: str) -> None:
