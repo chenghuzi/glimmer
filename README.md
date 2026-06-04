@@ -314,18 +314,23 @@ Working 4-bit LiteRT-LM export command for the latest trained adapter:
 
 ```bash
 ./.venv/bin/python run_train.py export \
-  --adapter-dir outputs/gemma4-asd-lora-r32-remix010-v1 \
-  --litert-out-dir outputs/gemma4-asd-lora-r32-remix010-v1-litert-w4 \
-  --quantization-recipe dynamic_wi4_afp32 \
-  --vision-encoder-quantization-recipe dynamic_wi8_afp32 \
-  --no-inspect
+  --adapter-dir outputs/gemma4-asd-lora-r32-remix010-zh-v2
 ```
+
+`export` is now the full iOS packaging path: it merges the LoRA adapter,
+exports a W4 text+vision LiteRT-LM package, grafts the official base Gemma 4
+audio encoder/adapter sections, rebuilds `model.litertlm`, and validates that
+text, vision, and audio sections are present. If
+`outputs/gemma4-official-litert/gemma-4-E4B-it.litertlm` is missing, the command
+tries to download it from `litert-community/gemma-4-E4B-it-litert-lm`.
 
 This writes:
 
 ```text
-outputs/gemma4-asd-lora-r32-remix010-v1-litert-w4/model.litertlm
+outputs/gemma4-asd-lora-r32-remix010-zh-v2-litert-w4-audio/model.litertlm
 ```
+
+To rebuild the same output directory, add `--overwrite`.
 
 ## Debug Training
 
