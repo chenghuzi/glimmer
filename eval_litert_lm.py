@@ -70,6 +70,12 @@ DEFAULT_MEDIA_CACHE_DIR = (
 @click.option("--temperature", default=0.0, show_default=True, type=click.FloatRange(min=0.0))
 @click.option("--top-p", default=1.0, show_default=True, type=click.FloatRange(min=0.0, max=1.0))
 @click.option("--top-k", default=1, show_default=True, type=click.IntRange(min=1))
+@click.option(
+    "--max-output-tokens",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Maximum generated tokens per response. Uses LiteRT-LM session config for conversation eval.",
+)
 @click.option("--workers", default=1, show_default=True, type=click.IntRange(min=1))
 @click.option("--rebuild-media-cache/--reuse-media-cache", default=False, show_default=True)
 def main(
@@ -94,6 +100,7 @@ def main(
     temperature: float,
     top_p: float,
     top_k: int,
+    max_output_tokens: int | None,
     workers: int,
     rebuild_media_cache: bool,
 ) -> None:
@@ -126,6 +133,7 @@ def main(
             temperature=temperature,
             top_p=top_p,
             top_k=top_k,
+            max_output_tokens=max_output_tokens,
             workers=workers,
             rebuild_media_cache=rebuild_media_cache,
             prompts=prompts,
@@ -203,6 +211,7 @@ def main(
                     frame_paths=media["frame_paths"],
                     audio_path=media["audio_path"],
                     sampler_config=sampler_config,
+                    max_output_tokens=max_output_tokens,
                 )
                 parsed = parse_generated_label_code(response_text)
                 truth = [int(value) for value in row["label_vector"]]
@@ -267,6 +276,7 @@ def main(
         "temperature": temperature,
         "top_p": top_p,
         "top_k": top_k,
+        "max_output_tokens": max_output_tokens,
     }
     metrics["artifacts"] = {
         "predictions_jsonl": str(predictions_path),
@@ -310,6 +320,7 @@ def run_parallel_eval(
     temperature: float,
     top_p: float,
     top_k: int,
+    max_output_tokens: int | None,
     workers: int,
     rebuild_media_cache: bool,
     prompts: Any,
@@ -395,6 +406,7 @@ def run_parallel_eval(
             str(top_p),
             "--top-k",
             str(top_k),
+            *(["--max-output-tokens", str(max_output_tokens)] if max_output_tokens is not None else []),
             "--workers",
             "1",
         ]
@@ -523,6 +535,7 @@ def run_parallel_eval(
         "temperature": temperature,
         "top_p": top_p,
         "top_k": top_k,
+        "max_output_tokens": max_output_tokens,
         "workers": workers,
         "shards": [
             {"worker_index": entry["worker_index"], "start": entry["start"], "count": entry["count"]}
@@ -707,18 +720,75 @@ def generate_one(
     frame_paths: list[Path],
     audio_path: Path,
     sampler_config: Any,
+    max_output_tokens: int | None,
 ) -> str:
-    # Gemma 4 LiteRT-LM is sensitive to modality order: images before text,
-    # audio after text. Audio before text caused thought-channel-only outputs.
+    # Match the training prompt order: video, audio, text. LiteRT-LM receives
+    # sampled image frames as the video proxy.
     contents = [
         *[litert_lm.Content.ImageFile(absolute_path=str(path.resolve())) for path in frame_paths],
-        litert_lm.Content.Text(user_prompt),
         litert_lm.Content.AudioFile(absolute_path=str(audio_path.resolve())),
+        litert_lm.Content.Text(user_prompt),
     ]
     messages = [litert_lm.Message.system(system_prompt)]
-    with engine.create_conversation(messages=messages, sampler_config=sampler_config) as conversation:
+    with create_eval_conversation(
+        litert_lm=litert_lm,
+        engine=engine,
+        messages=messages,
+        sampler_config=sampler_config,
+        max_output_tokens=max_output_tokens,
+    ) as conversation:
         response = conversation.send_message(litert_lm.Message.user(litert_lm.Contents.of(contents)))
     return extract_response_text(response).strip()
+
+
+def create_eval_conversation(
+    *,
+    litert_lm: Any,
+    engine: Any,
+    messages: list[Any],
+    sampler_config: Any,
+    max_output_tokens: int | None,
+) -> Any:
+    if max_output_tokens is None:
+        return engine.create_conversation(messages=messages, sampler_config=sampler_config)
+
+    import ctypes
+    from litert_lm.conversation import Conversation
+    from litert_lm.utils import _sampler_config_to_params
+
+    lib = engine._lib
+    session_config = lib.litert_lm_session_config_create()
+    if not session_config:
+        raise RuntimeError("Failed to create LiteRT-LM session config")
+    try:
+        params = _sampler_config_to_params(sampler_config)
+        lib.litert_lm_session_config_set_sampler_params(session_config, ctypes.byref(params))
+        lib.litert_lm_session_config_set_max_output_tokens(session_config, int(max_output_tokens))
+
+        conv_config = lib.litert_lm_conversation_config_create()
+        if not conv_config:
+            raise RuntimeError("Failed to create LiteRT-LM conversation config")
+        try:
+            lib.litert_lm_conversation_config_set_session_config(conv_config, session_config)
+            if messages:
+                serialized_messages = [message.to_json() if hasattr(message, "to_json") else message for message in messages]
+                lib.litert_lm_conversation_config_set_messages(conv_config, json.dumps(serialized_messages))
+            conv_ptr = lib.litert_lm_conversation_create(engine._engine_ptr, conv_config)
+        finally:
+            lib.litert_lm_conversation_config_delete(conv_config)
+    finally:
+        lib.litert_lm_session_config_delete(session_config)
+
+    if not conv_ptr:
+        raise RuntimeError("Failed to create LiteRT-LM conversation")
+
+    return Conversation(
+        lib,
+        conv_ptr,
+        engine=engine,
+        messages=messages or [],
+        sampler_config=sampler_config,
+    )
 
 
 def extract_response_text(response: Any) -> str:
