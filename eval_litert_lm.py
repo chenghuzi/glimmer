@@ -193,7 +193,7 @@ def main(
         str(litertlm_file),
         backend=make_backend(litert_lm, backend),
         vision_backend=make_backend(litert_lm, vision_backend),
-        audio_backend=make_backend(litert_lm, audio_backend),
+        audio_backend=make_backend(litert_lm, audio_backend) if use_audio else None,
         cache_dir=str(cache_dir) if cache_dir else "",
     ) as engine:
         with predictions_path.open("w", encoding="utf-8") as handle:
