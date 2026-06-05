@@ -36,9 +36,11 @@
 ## 目录
 
 - `ios/` — 端侧 SwiftUI app（LiteRT-LM）
-  - `Sources/ScreeningService.swift` — 引擎加载（GPU→CPU 回退）、system prompt、确定性采样、多帧推理
-  - `Sources/AnalysisView.swift` — 抽帧（按训练规范）+ 调用推理
-  - `Sources/ReportView.swift` — B01–B10 严格校验 + 报告渲染
+  - `Package.swift` — SwiftPM package，管理 `GlimmerIOS`、`LiteRTLM` 和 `CLiteRTLM.xcframework`
+  - `App/` — 极薄 iOS app host，只负责 app entrypoint、Info.plist、entitlements、bundle/signing
+  - `Sources/GlimmerIOS/ScreeningService.swift` — 引擎加载（GPU→CPU 回退）、system prompt、确定性采样、多帧推理
+  - `Sources/GlimmerIOS/AnalysisView.swift` — 抽帧（按训练规范）+ 调用推理
+  - `Sources/GlimmerIOS/ReportView.swift` — B01–B10 严格校验 + 报告渲染
   - `Vendor/` — LiteRT-LM Swift 源码 + xcframework
   - `Model/` — 放 `asd-gemma4-code9.litertlm`（不入库，见「模型获取与放置」）
 - `docs/ios-integration-report.md` — 接入测试报告（输入/输出/问题诊断）
@@ -71,9 +73,11 @@ cd ios
 # 2. 生成工程
 xcodegen generate
 # 3. 真机构建（需付费开发者账号 + 增大内存权限）
-xcodebuild -project GemmaScreen.xcodeproj -scheme GemmaScreen \
+xcodebuild -project GemmaScreen.xcodeproj -target GemmaScreen \
   -destination 'id=<设备UDID>' -allowProvisioningUpdates build
 ```
+
+本工程的核心代码和 LiteRT-LM 依赖由 SwiftPM 管理；`GemmaScreen.xcodeproj` 只作为 iOS app host，负责 bundle、签名、entitlements 和安装运行。日常可以不打开 Xcode，直接用 `xcodegen` + `xcodebuild`。
 
 > 需要 `increased-memory-limit` + `extended-virtual-addressing` 权限，要求**付费 Apple Developer 账号**。模型经 mmap 加载，真机推理峰值实测 ≈1.2GB（远低于 7.8GB 文件体积）。
 

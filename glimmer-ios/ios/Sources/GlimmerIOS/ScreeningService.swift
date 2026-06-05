@@ -1,4 +1,5 @@
 import Foundation
+import LiteRTLM
 
 /// 端侧筛查服务（LiteRT-LM 运行时）：看画面 + 听声音，全程本地。
 @MainActor
