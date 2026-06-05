@@ -255,6 +255,7 @@ struct ASDLiteRTCLI {
                     engine: engine.value,
                     systemPrompt: promptBundle.value.system,
                     userPrompt: promptBundle.value.user,
+                    framePaths: frames.value.paths,
                     code: code,
                     historyMessageLimit: config.historyMessageLimit,
                     chatMaxOutputTokens: config.chatMaxOutputTokens
@@ -632,6 +633,7 @@ private func runExplainREPL(
     engine: Engine,
     systemPrompt: String,
     userPrompt: String,
+    framePaths: [String],
     code: String,
     historyMessageLimit: Int,
     chatMaxOutputTokens: Int
@@ -639,12 +641,19 @@ private func runExplainREPL(
     let explainSystemPrompt = makeExplainSystemPrompt(from: systemPrompt)
     let explainUserPrompt = makeExplainUserPrompt(from: userPrompt)
     let assistantDiagnostic = assistantDiagnosticMessage(for: code)
+    let videoObservationSummary = try await generateVideoObservationSummary(
+        engine: engine,
+        framePaths: framePaths
+    )
+    print("视频观察摘要：\(videoObservationSummary)")
+
     var history: [ChatTextMessage] = []
     var conversation = try await makeExplainConversation(
         engine: engine,
         systemPrompt: explainSystemPrompt,
         userPrompt: explainUserPrompt,
         assistantDiagnostic: assistantDiagnostic,
+        videoObservationSummary: videoObservationSummary,
         history: history,
         historyMessageLimit: historyMessageLimit,
         maxOutputTokens: chatMaxOutputTokens
@@ -693,6 +702,7 @@ private func runExplainREPL(
                 systemPrompt: explainSystemPrompt,
                 userPrompt: explainUserPrompt,
                 assistantDiagnostic: assistantDiagnostic,
+                videoObservationSummary: videoObservationSummary,
                 history: history,
                 historyMessageLimit: historyMessageLimit,
                 maxOutputTokens: chatMaxOutputTokens
@@ -706,6 +716,7 @@ private func makeExplainConversation(
     systemPrompt: String,
     userPrompt: String,
     assistantDiagnostic: String,
+    videoObservationSummary: String,
     history: [ChatTextMessage],
     historyMessageLimit: Int,
     maxOutputTokens: Int
@@ -720,7 +731,8 @@ private func makeExplainConversation(
     }
     let initialMessages = [
         Message(userPrompt, role: .user),
-        Message(assistantDiagnostic, role: .model)
+        Message(assistantDiagnostic, role: .model),
+        Message(videoObservationContextMessage(videoObservationSummary), role: .user)
     ] + retainedHistory
     let conversationConfig = ConversationConfig(
         systemMessage: Message(systemPrompt),
@@ -729,6 +741,33 @@ private func makeExplainConversation(
         maxOutputTokens: maxOutputTokens
     )
     return try await engine.createConversation(with: conversationConfig)
+}
+
+private func generateVideoObservationSummary(
+    engine: Engine,
+    framePaths: [String]
+) async throws -> String {
+    let samplerConfig = try SamplerConfig(
+        topK: 1,
+        topP: 1.0,
+        temperature: 0.0
+    )
+    let systemPrompt = """
+你只负责为后续解释对话生成视频观察摘要。
+请客观描述视频片段里能看到的场景、光照或阴影、人物位置和整体动作。
+必须单独说明手臂或手部动作；如果看不清，也直接说看不清。
+不要输出行为标签、二进制码、诊断判断或 Markdown；最多 3 句话。
+"""
+    let conversationConfig = ConversationConfig(
+        systemMessage: Message(systemPrompt),
+        samplerConfig: samplerConfig,
+        maxOutputTokens: 128
+    )
+    let conversation = try await engine.createConversation(with: conversationConfig)
+    var contents = framePaths.map { Content.imageFile($0) }
+    contents.append(Content.text("请生成这个视频片段的观察摘要。"))
+    let response = try await conversation.sendMessage(Message(contents: contents))
+    return response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private func sendExplainQuestion(
@@ -743,31 +782,25 @@ private func sendExplainQuestion(
 
 private func makeExplainSystemPrompt(from originalPrompt: String) -> String {
     """
-你是一个行为筛查结果解释助手。你会参考编辑后的原始分类提示、上一条 assistant 诊断消息和最近对话，回答用户对结果的追问。
+你是一个面向家长的行为观察结果解释助手。你的回答应该像应用里的自然对话：简短、清楚、温和，直接回应用户的问题。
 
-编辑后的原始分类 system prompt，仅保留标签定义和任务边界：
+下面是原始分类任务的背景，只作为标签含义和任务边界参考：
 \(makeExplanationPromptReference(from: originalPrompt))
 
-解释阶段最终规则：
-分类阶段已经完成。9 位二进制标签码已经由上一条 assistant message 给出，当前阶段不得输出新的 9 位码。
-当前任务是解释上一条 assistant message 中已经生成的 raw code 和中文解析，并回答用户的后续追问。
-不要重新分类，不要改写上一条 raw code 的记录，不要主动否定上一条结果。
-当用户询问为什么某个标签被观察到时，优先解释该标签可能被触发的可观察依据；如果证据较弱，可以说“可能是”或“置信度有限”，但不要改判。
-只有当用户明确要求重新判别或复核时，才可以讨论上一条结果是否可能错误。
-每次回答最多 3 句话。不得使用 Markdown 格式，不得使用标题、编号、项目符号、星号或代码块。
-只做行为筛查支持说明，不要声称医学诊断。
+现在已经进入视频问答和结果解释阶段。上一条 assistant message 里的 raw code 和中文解析是固定的解释对象；系统还会提供一段同一视频的观察摘要。
+你可以回答任何与这个视频内容、观察摘要或筛查结果有关的问题，包括人物动作、场景、位置、光照、物体和已标记行为；回答时优先使用观察摘要里的具体画面信息。
+如果用户问“为什么”，用自然语言说明这个标签可能对应的可观察动作；如果证据听起来较弱，可以用“可能”“不一定很明显”这类表达，但不要主动把结果推翻。
+如果用户的问题和这个视频或结果无关，简短说明只能回答与这段视频有关的问题。
+每次最多 3 句话，使用普通中文句子，不使用 Markdown、标题、编号或项目符号。不要输出医学诊断，也不要在每次回答里重复免责声明。
 """
 }
 
 private func makeExplainUserPrompt(from originalPrompt: String) -> String {
     """
-编辑后的原始分类 user prompt，仅保留标签位序、标签含义和任务边界：
+原始分类提示的参考信息：
 \(makeExplanationPromptReference(from: originalPrompt))
 
-解释阶段补充说明：
-现在进入自然语言追问阶段；上一条 assistant message 已经给出 raw code 和中文解析。
-请结合上一条 assistant 诊断消息和最近对话，回答用户当前问题。
-不要输出新的 9 位二进制码，不要重新分类，不要主动否定上一条结果，不要使用 Markdown，每次回答最多 3 句话。
+后续对话只回答和这段视频、观察摘要或已给出结果相关的问题。回答要像和用户交流，不像报告或免责声明；可以结合视频观察摘要里的具体画面。用户问“还有别的吗”时，直接说有没有其他标记，不主动逐项列出所有未标记类别，除非用户追问具体类别。
 """
 }
 
@@ -806,20 +839,25 @@ private func makeExplanationPromptReference(from prompt: String) -> String {
 
 private func makeExplainQuestionText(_ question: String, userPrompt: String) -> String {
     """
-解释阶段当前轮规则：
+解释阶段上下文：
 \(userPrompt)
 
 当前用户问题：
 \(question)
 
-请直接回答当前问题。上一条 assistant 的 raw code 是当前解释对象，不是待复核的新分类请求。
-不要输出新的 9 位二进制码，不要重新分类，不要主动改判，不要说“没有观察到该标签”或“之前判断错误”，除非用户明确要求复核。
-不要使用 Markdown，最多 3 句话。
+请直接回答这句话，语气自然一点；短问题就短答。如果问题涉及视频内容，就根据观察摘要里最接近的信息回答，不要因为摘要不完整就先拒绝；如果摘要确实没有相关信息，再说明看不出来。如果问题涉及筛查结果，就根据上一条 assistant 的 raw code 和中文解析回答。除非用户明确要求复核，否则不要把回答变成重新分类；如果问题和这段视频无关，就简短拒绝。最多 3 句话，不使用 Markdown，也不要重复免责声明。
 """
 }
 
 private func assistantDiagnosticMessage(for code: String) -> String {
     "上一条 assistant 诊断结果如下；这是后续解释对话的固定解释对象，不是新的分类请求。\n\n\(code)\n\n\(diagnosticExplanationText(for: code))"
+}
+
+private func videoObservationContextMessage(_ summary: String) -> String {
+    """
+同一视频片段的观察摘要如下。它只用于帮助解释上一条结果，不代表新的分类：
+\(summary)
+"""
 }
 
 private func loadEvalSamples(csvURL: URL, clipsDir: URL) throws -> [EvalSample] {
@@ -1223,7 +1261,6 @@ private func diagnosticExplanationText(for code: String) -> String {
 
     lines.append("- B10 背景类：\(!anyPositive ? "是" : "否")")
     lines.append("总体：\(anyPositive ? "观察到可见行为特征" : "未观察到 B01 到 B09 行为特征，归为背景类")")
-    lines.append("说明：以上是基于视频片段的行为筛查支持，不是医学诊断。")
     return lines.joined(separator: "\n")
 }
 

@@ -47,11 +47,12 @@ cd swift/asd-litert-cli
 
 - 先按原流程输出加载时间、raw 9-bit code、中文解析结果。
 - CLI 会基于原始分类 system/user prompt 生成解释阶段 prompt，保留标签定义和任务边界，但替换/移除“只能输出 9-bit code”的格式约束。
+- CLI 会基于同一批视频帧生成一段短的观察摘要，用于后续自然语言解释。
 - CLI 会把 `raw code + 中文解析结果` 作为一条 assistant message 放进解释上下文。
 - CLI 自动追加用户问题 `为什么？`，打印模型回复。
-- 之后进入交互模式，输入 `/quit` 退出；解释阶段每次回复最多 3 句话，且不使用 Markdown。
+- 之后进入交互模式，输入 `/quit` 退出；解释阶段每次回复最多 3 句话，不使用 Markdown，语气尽量自然，不重复 app 层统一附加的免责声明。
 
-解释阶段不会重新发送视频帧，避免模型把后续追问当成新的视觉分类请求；它基于已经生成的 raw code、中文解析、解释阶段 prompt 和最近文本对话回答。默认保留最近 10 条文本消息：
+解释阶段不会在每一轮重新发送视频帧，避免模型把后续追问当成新的视觉分类请求；它基于已经生成的 raw code、中文解析、视频观察摘要、解释阶段 prompt 和最近文本对话回答。默认保留最近 10 条文本消息：
 
 ```bash
 ./run.sh --explain-repl --history-k 10 --chat-max-output-tokens 512 /path/to/video.mp4
