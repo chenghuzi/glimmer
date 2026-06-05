@@ -436,6 +436,10 @@ def build_cache(
 @click.option("--generated-metrics/--no-generated-metrics", default=True, show_default=True)
 @click.option("--bf16/--no-bf16", default=True, show_default=True)
 @click.option("--gradient-checkpointing/--no-gradient-checkpointing", default=True, show_default=True)
+@click.option("--qlora-4bit/--no-qlora-4bit", default=False, show_default=True)
+@click.option("--loftq/--no-loftq", default=False, show_default=True)
+@click.option("--loftq-bits", default=4, show_default=True, type=click.IntRange(min=2, max=8))
+@click.option("--loftq-iter", default=1, show_default=True, type=click.IntRange(min=1))
 @click.option("--resume-from-checkpoint", default=None, type=click.Path(path_type=Path))
 def train(
     cuda_devices: str,
@@ -482,6 +486,10 @@ def train(
     generated_metrics: bool,
     bf16: bool,
     gradient_checkpointing: bool,
+    qlora_4bit: bool,
+    loftq: bool,
+    loftq_bits: int,
+    loftq_iter: int,
     resume_from_checkpoint: Path | None,
 ) -> None:
     """Fine-tune Gemma 4 E4B with BF16 LoRA on ASD-DS."""
@@ -493,8 +501,8 @@ def train(
 
     import torch
     import wandb as wandb_lib
-    from peft import LoraConfig, get_peft_model
-    from transformers import AutoProcessor, Gemma4ForConditionalGeneration, Trainer, TrainingArguments
+    from peft import LoftQConfig, LoraConfig, get_peft_model, prepare_model_for_kbit_training
+    from transformers import AutoProcessor, BitsAndBytesConfig, Gemma4ForConditionalGeneration, Trainer, TrainingArguments
 
     ffmpeg = find_tool("ffmpeg")
     load_env_file(env_file)
@@ -518,6 +526,11 @@ def train(
     click.echo(f"cache_mode: {cache_mode}")
     click.echo(f"prompt_lang: {prompts.lang}")
     click.echo(f"use_audio: {use_audio}")
+    click.echo(f"qlora_4bit: {qlora_4bit}")
+    click.echo(f"loftq: {loftq}")
+    if loftq:
+        click.echo(f"loftq_bits: {loftq_bits}")
+        click.echo(f"loftq_iter: {loftq_iter}")
     click.echo(f"ffmpeg: {ffmpeg}")
 
     dataset = load_asd_ds(data_root)
@@ -577,17 +590,39 @@ def train(
     )
 
     max_memory = {idx: max_memory_per_gpu for idx in range(torch.cuda.device_count())}
+    quantization_config = None
+    if qlora_4bit and not loftq:
+        quantization_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16 if bf16 else torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+
     model = Gemma4ForConditionalGeneration.from_pretrained(
         model_dir,
         dtype=torch.bfloat16 if bf16 else torch.float16,
         device_map="auto",
         max_memory=max_memory,
+        quantization_config=quantization_config,
         local_files_only=True,
     )
     model.config.use_cache = False
 
     if gradient_checkpointing:
         enable_gradient_checkpointing(model)
+
+    if qlora_4bit and not loftq:
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=gradient_checkpointing,
+        )
+
+    lora_init: bool | str = True
+    loftq_config = None
+    if loftq:
+        lora_init = "loftq"
+        loftq_config = LoftQConfig(loftq_bits=loftq_bits, loftq_iter=loftq_iter)
 
     lora_config = LoraConfig(
         r=lora_r,
@@ -596,6 +631,8 @@ def train(
         bias="none",
         task_type="CAUSAL_LM",
         target_modules=parse_target_modules(target_modules),
+        init_lora_weights=lora_init,
+        loftq_config=loftq_config,
     )
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
