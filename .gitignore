@@ -210,6 +210,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# SwiftPM
+.build/
+
 # PyPI configuration file
 .pypirc
 
@@ -223,3 +226,4 @@ __marimo__/
 data/raw
 outputs
 repomix-output.xml
+.vscode
