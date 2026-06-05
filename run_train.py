@@ -434,6 +434,27 @@ def build_cache(
 @click.option("--max-memory-per-gpu", default="22GiB", show_default=True)
 @click.option("--prediction-max-new-tokens", default=16, show_default=True, type=click.IntRange(min=1))
 @click.option("--generated-metrics/--no-generated-metrics", default=True, show_default=True)
+@click.option(
+    "--generated-early-stopping-metric",
+    default="none",
+    show_default=True,
+    type=click.Choice(["none", "micro_f1", "macro_f1", "exact_match", "hamming_accuracy", "parse_rate"]),
+    help="Stop training from generated validation metrics. Disabled by default.",
+)
+@click.option(
+    "--generated-early-stopping-patience",
+    default=0,
+    show_default=True,
+    type=click.IntRange(min=0),
+    help="Number of generated validation evaluations without improvement before stopping.",
+)
+@click.option(
+    "--generated-early-stopping-min-delta",
+    default=0.0,
+    show_default=True,
+    type=click.FloatRange(min=0.0),
+    help="Minimum improvement required for generated early stopping.",
+)
 @click.option("--bf16/--no-bf16", default=True, show_default=True)
 @click.option("--gradient-checkpointing/--no-gradient-checkpointing", default=True, show_default=True)
 @click.option("--qlora-4bit/--no-qlora-4bit", default=False, show_default=True)
@@ -484,6 +505,9 @@ def train(
     max_memory_per_gpu: str,
     prediction_max_new_tokens: int,
     generated_metrics: bool,
+    generated_early_stopping_metric: str,
+    generated_early_stopping_patience: int,
+    generated_early_stopping_min_delta: float,
     bf16: bool,
     gradient_checkpointing: bool,
     qlora_4bit: bool,
@@ -528,6 +552,13 @@ def train(
     click.echo(f"use_audio: {use_audio}")
     click.echo(f"qlora_4bit: {qlora_4bit}")
     click.echo(f"loftq: {loftq}")
+    if generated_early_stopping_metric != "none" and generated_early_stopping_patience > 0:
+        click.echo(
+            "generated_early_stopping: "
+            f"metric={generated_early_stopping_metric} "
+            f"patience={generated_early_stopping_patience} "
+            f"min_delta={generated_early_stopping_min_delta}"
+        )
     if loftq:
         click.echo(f"loftq_bits: {loftq_bits}")
         click.echo(f"loftq_iter: {loftq_iter}")
@@ -684,6 +715,9 @@ def train(
             GeneratedMetricsCallback(
                 evaluator=metrics_evaluator,
                 eval_dataset=eval_dataset,
+                early_stopping_metric=generated_early_stopping_metric,
+                early_stopping_patience=generated_early_stopping_patience,
+                early_stopping_min_delta=generated_early_stopping_min_delta,
             )
         )
 
@@ -1610,10 +1644,24 @@ class Gemma4ASDDSCollator:
 class GeneratedMetricsCallback(TrainerCallback):
     """Run generation-based validation metrics after Trainer loss evaluation."""
 
-    def __init__(self, *, evaluator: "GeneratedMetricsEvaluator", eval_dataset: Any) -> None:
+    def __init__(
+        self,
+        *,
+        evaluator: "GeneratedMetricsEvaluator",
+        eval_dataset: Any,
+        early_stopping_metric: str = "none",
+        early_stopping_patience: int = 0,
+        early_stopping_min_delta: float = 0.0,
+    ) -> None:
         self.evaluator = evaluator
         self.eval_dataset = eval_dataset
         self._seen_steps: set[int] = set()
+        self.early_stopping_metric = early_stopping_metric
+        self.early_stopping_patience = early_stopping_patience
+        self.early_stopping_min_delta = early_stopping_min_delta
+        self._best_metric: float | None = None
+        self._best_step: int | None = None
+        self._bad_evals = 0
 
     def on_evaluate(self, args: Any, state: Any, control: Any, **kwargs: Any) -> Any:
         if not state.is_world_process_zero:
@@ -1628,14 +1676,59 @@ class GeneratedMetricsCallback(TrainerCallback):
         if model is None:
             return control
 
-        self.evaluator.evaluate(
+        metrics = self.evaluator.evaluate(
             model=model,
             dataset=self.eval_dataset,
             split_name="validation",
             step=step,
             epoch=state.epoch,
         )
+        self._update_early_stopping(metrics=metrics, step=step, control=control)
         return control
+
+    def _update_early_stopping(self, *, metrics: dict[str, Any], step: int, control: Any) -> None:
+        if self.early_stopping_metric == "none" or self.early_stopping_patience <= 0:
+            return
+
+        value = generated_metric_value(metrics, self.early_stopping_metric)
+        improved = (
+            self._best_metric is None
+            or value > self._best_metric + self.early_stopping_min_delta
+        )
+        if improved:
+            self._best_metric = value
+            self._best_step = step
+            self._bad_evals = 0
+            click.echo(
+                "[generated-early-stop] "
+                f"new best {self.early_stopping_metric}={value:.4f} at step {step}"
+            )
+            return
+
+        self._bad_evals += 1
+        click.echo(
+            "[generated-early-stop] "
+            f"{self.early_stopping_metric}={value:.4f} did not improve "
+            f"best={self._best_metric:.4f} at step {self._best_step}; "
+            f"bad_evals={self._bad_evals}/{self.early_stopping_patience}"
+        )
+        if self._bad_evals >= self.early_stopping_patience:
+            control.should_training_stop = True
+            click.echo(
+                "[generated-early-stop] "
+                f"stopping training after {self._bad_evals} generated validation evals "
+                f"without improvement on {self.early_stopping_metric}"
+            )
+
+
+def generated_metric_value(metrics: dict[str, Any], metric_name: str) -> float:
+    if metric_name == "micro_f1":
+        return float(metrics["micro"]["f1"])
+    if metric_name == "macro_f1":
+        return float(metrics["macro"]["f1"])
+    if metric_name in {"exact_match", "hamming_accuracy", "parse_rate"}:
+        return float(metrics[metric_name])
+    raise ValueError(f"Unsupported generated early-stopping metric: {metric_name}")
 
 
 class GeneratedMetricsEvaluator:
