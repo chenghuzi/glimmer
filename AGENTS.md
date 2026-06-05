@@ -41,11 +41,14 @@ For long-running local experiments, send completion/failure notifications throug
 
 ```bash
 curl -fsS --get \
-  "https://api.day.app/7GofcjfmCvWZqvfrvYuFV/Codex%20run%20finished" \
-  --data-urlencode "body=Replace this with the run summary." \
+  "https://api.day.app/7GofcjfmCvWZqvfrvYuFV/Codex%20run%20finished/Replace%20this%20with%20the%20run%20summary." \
   --data-urlencode "group=hz_res_ft" \
   --data-urlencode "isArchive=1"
 ```
+
+Bark title and body are path segments: `/{key}/{title}/{body}`. Use this
+slash-separated URL format for future notifications. URL-encode non-ASCII or
+unsafe characters when constructing the path.
 
 ## Dataset Facts
 
