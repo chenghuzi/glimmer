@@ -965,6 +965,13 @@ def merge_model(
     show_default=True,
     help="LiteRT vision encoder quantization recipe. Use 'none' to export without quantization.",
 )
+@click.option(
+    "--cache-length",
+    default=4096,
+    show_default=True,
+    type=click.IntRange(min=1),
+    help="LiteRT KV cache length. Increase when multimodal prompts exceed the default 4096-token limit.",
+)
 def export_model(
     cuda_devices: str,
     model_dir: Path,
@@ -981,6 +988,7 @@ def export_model(
     use_audio: bool,
     quantization_recipe: str,
     vision_encoder_quantization_recipe: str,
+    cache_length: int,
 ) -> None:
     """Merge a LoRA adapter and export a LiteRT-LM package."""
     configure_runtime(cuda_devices)
@@ -1011,6 +1019,7 @@ def export_model(
     click.echo(f"official_litertlm_file: {official_litertlm_file}")
     click.echo(f"quantization_recipe: {quantization_recipe_value}")
     click.echo(f"vision_encoder_quantization_recipe: {vision_quantization_recipe_value}")
+    click.echo(f"cache_length: {cache_length}")
 
     if should_merge:
         merge_lora_adapter(
@@ -1036,6 +1045,7 @@ def export_model(
             litert_out_dir=text_vision_out_dir,
             quantization_recipe=quantization_recipe_value,
             vision_encoder_quantization_recipe=vision_quantization_recipe_value,
+            cache_length=cache_length,
         )
         litertlm_file = build_audio_capable_litert_lm(
             text_vision_litertlm_file=text_vision_litertlm_file,
@@ -1043,6 +1053,7 @@ def export_model(
             litert_out_dir=litert_out_dir,
             quantization_recipe=quantization_recipe_value,
             vision_encoder_quantization_recipe=vision_quantization_recipe_value,
+            cache_length=cache_length,
         )
         shutil.rmtree(text_vision_out_dir, ignore_errors=True)
     else:
@@ -1051,12 +1062,14 @@ def export_model(
             litert_out_dir=litert_out_dir,
             quantization_recipe=quantization_recipe_value,
             vision_encoder_quantization_recipe=vision_quantization_recipe_value,
+            cache_length=cache_length,
         )
         write_text_vision_export_manifest(
             manifest_path=litert_out_dir / "export_manifest.json",
             final_litertlm_file=litertlm_file,
             quantization_recipe=quantization_recipe_value,
             vision_encoder_quantization_recipe=vision_quantization_recipe_value,
+            cache_length=cache_length,
         )
 
     if inspect:
@@ -1244,6 +1257,7 @@ def export_text_vision_litert_lm(
     litert_out_dir: Path,
     quantization_recipe: str | None,
     vision_encoder_quantization_recipe: str | None,
+    cache_length: int,
 ) -> Path:
     litert_torch = find_tool("litert-torch")
     command = [
@@ -1255,6 +1269,7 @@ def export_text_vision_litert_lm(
         "--task=image_text_to_text",
         "--export_vision_encoder",
         f"--jinja_chat_template_override={DEFAULT_LITERT_TEMPLATE_OVERRIDE}",
+        f"--cache_length={cache_length}",
     ]
     command.append(
         "--quantization_recipe="
@@ -1286,6 +1301,7 @@ def build_audio_capable_litert_lm(
     litert_out_dir: Path,
     quantization_recipe: str | None,
     vision_encoder_quantization_recipe: str | None,
+    cache_length: int,
 ) -> Path:
     litert_lm_builder = find_tool("litert-lm-builder")
     final_litertlm_file = litert_out_dir / "model.litertlm"
@@ -1326,6 +1342,7 @@ def build_audio_capable_litert_lm(
         final_litertlm_file=final_litertlm_file,
         quantization_recipe=quantization_recipe,
         vision_encoder_quantization_recipe=vision_encoder_quantization_recipe,
+        cache_length=cache_length,
     )
     validate_litert_lm_sections(final_litertlm_file, use_audio=True)
     return final_litertlm_file
@@ -1357,6 +1374,7 @@ def write_export_manifest(
     final_litertlm_file: Path,
     quantization_recipe: str | None,
     vision_encoder_quantization_recipe: str | None,
+    cache_length: int,
 ) -> None:
     manifest = {
         "format": "gemma4_asd_litert_audio_export_v1",
@@ -1367,6 +1385,7 @@ def write_export_manifest(
             "removed_after_packaging": True,
             "quantization_recipe": quantization_recipe,
             "vision_encoder_quantization_recipe": vision_encoder_quantization_recipe,
+            "cache_length": cache_length,
         },
         "audio_source": {
             "litertlm_file": str(official_litertlm_file),
@@ -1384,6 +1403,7 @@ def write_text_vision_export_manifest(
     final_litertlm_file: Path,
     quantization_recipe: str | None,
     vision_encoder_quantization_recipe: str | None,
+    cache_length: int,
 ) -> None:
     manifest = {
         "format": "gemma4_asd_litert_text_vision_export_v1",
@@ -1392,6 +1412,7 @@ def write_text_vision_export_manifest(
         "text_vision_source": {
             "quantization_recipe": quantization_recipe,
             "vision_encoder_quantization_recipe": vision_encoder_quantization_recipe,
+            "cache_length": cache_length,
         },
         "required_model_types": list(required_litert_model_types(use_audio=False)),
     }
