@@ -1,10 +1,11 @@
+import GlimmerIOS
 import SwiftUI
 
 @main
-struct GemmaScreenApp: App {
+struct GemmaScreenHostApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            GlimmerRootView()
         }
     }
 }
