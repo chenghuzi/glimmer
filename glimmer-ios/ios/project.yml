@@ -1,0 +1,38 @@
+name: GemmaScreen
+options:
+  bundleIdPrefix: cn.youyou
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  GemmaScreen:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - Vendor/LiteRTLM
+      - Resources
+      - path: Model/asd-gemma4-code9.litertlm
+        buildPhase: resources
+    dependencies:
+      - framework: Vendor/CLiteRTLM.xcframework
+        embed: true
+        codeSign: true
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: 行为筛查
+        UILaunchScreen: {}
+        NSPhotoLibraryUsageDescription: 选择行为视频，在本地进行筛查分析（数据不离开设备）
+        NSCameraUsageDescription: 录制行为视频用于本地筛查分析（数据不离开设备）
+        NSMicrophoneUsageDescription: 录制视频时一并采集声音（数据不离开设备）
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cn.youyou.gemmascreen
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        DEVELOPMENT_TEAM: XN9XFCT4XH
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: Sources/GemmaScreen.entitlements
+        OTHER_LDFLAGS: -all_load

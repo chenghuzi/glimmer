@@ -1,0 +1,6 @@
+{"image": "/Users/damon/code/gemma4-screening/data/sample/images/img1.jpg", "question": "观察这段儿童行为画面，描述可见的社交沟通行为，并给出是否需要进一步评估的提示。", "answer": "观察到的行为：画面中可见环境与人物活动。可评估的信号点包括眼神接触、共同注意（是否顺着他人指向看）、对名字的回应、是否有重复刻板动作、手势/指物。\n初步信号：信息不足，无法判定。\n建议：本工具仅作早期信号提示，不构成诊断。如有持续担忧，建议寻求专业评估（如儿保科/发育行为儿科）。"}
+{"image": "/Users/damon/code/gemma4-screening/data/sample/images/img2.jpg", "question": "请逐条列出与自闭症筛查相关的可观察行为。", "answer": "可观察的行为维度：\n1. 眼神接触：是否与他人有自然的目光交流。\n2. 共同注意：是否对他人指向/注视做出跟随。\n3. 社交回应：被叫名字或被发起互动时是否回应。\n4. 重复刻板：是否有重复动作或对物体的刻板摆弄。\n5. 手势使用：是否用手势（指、招手）表达需求。\n说明：以上为信号维度，非诊断结论。需专业评估确认。"}
+{"image": "/Users/damon/code/gemma4-screening/data/sample/images/img3.jpg", "question": "这段视频帧里有哪些需要关注的行为信号？", "answer": "需关注的信号：眼神接触是否减少、是否缺乏共同注意、对呼名反应是否延迟、是否出现重复刻板动作。\n当前画面证据有限，仅能提示需进一步观察。\n重要提示：这是早期信号筛查，不能替代专业诊断，建议转介专业机构评估。"}
+{"image": "/Users/damon/code/gemma4-screening/data/sample/images/img1.jpg", "question": "用一句话总结这帧的筛查提示。", "answer": "画面证据不足以判定，建议结合更多行为片段观察，并在有持续担忧时寻求专业评估；本工具不提供诊断。"}
+{"image": "/Users/damon/code/gemma4-screening/data/sample/images/img2.jpg", "question": "孩子有没有表现出共同注意？", "answer": "从单帧无法可靠判断共同注意。共同注意指孩子是否顺着他人的指向或目光去看同一目标。建议观察多段互动片段；如持续缺乏，可作为需进一步专业评估的信号之一。"}
+{"image": "/Users/damon/code/gemma4-screening/data/sample/images/img3.jpg", "question": "给家长一句温和的说明。", "answer": "这个结果只是基于画面的初步信号提示，并不是诊断。每个孩子发展节奏不同，如果你有持续的担忧，去儿保科或发育行为儿科做一次正规评估会更安心。"}
