@@ -36,6 +36,9 @@ private struct CLIConfig {
     var cacheDir: String?
     var clipsDir: String?
     var outputJSONLPath: String?
+    var explainREPL = false
+    var historyMessageLimit = 10
+    var chatMaxOutputTokens = 512
     var ffmpegPath = "ffmpeg"
     var ffprobePath = "ffprobe"
     var backend = "gpu"
@@ -99,6 +102,11 @@ private struct LabelMetric {
     let falseNegative: Int
 }
 
+private struct ChatTextMessage {
+    let role: Role
+    let text: String
+}
+
 private enum CLIError: Error, CustomStringConvertible {
     case usage(String)
     case missingFile(String)
@@ -109,6 +117,7 @@ private enum CLIError: Error, CustomStringConvertible {
     case noFrames(URL)
     case invalidModelOutput(String)
     case invalidCSV(String)
+    case invalidIntegerOption(option: String, value: String)
 
     var description: String {
         switch self {
@@ -130,6 +139,8 @@ private enum CLIError: Error, CustomStringConvertible {
             return "模型输出无法构成 9 位二进制码：\(raw)"
         case .invalidCSV(let message):
             return "CSV 格式错误：\(message)"
+        case .invalidIntegerOption(let option, let value):
+            return "参数 \(option) 必须是正整数，实际值：\(value)"
         }
     }
 }
@@ -239,6 +250,17 @@ struct ASDLiteRTCLI {
             print("raw output: \(code)")
             printExplanation(for: code)
 
+            if config.explainREPL {
+                try await runExplainREPL(
+                    engine: engine.value,
+                    systemPrompt: promptBundle.value.system,
+                    userPrompt: promptBundle.value.user,
+                    code: code,
+                    historyMessageLimit: config.historyMessageLimit,
+                    chatMaxOutputTokens: config.chatMaxOutputTokens
+                )
+            }
+
             let elapsed = Date().timeIntervalSince(startedAt)
             print(String(format: "总耗时：%.3fs", elapsed))
         } catch {
@@ -262,6 +284,20 @@ private func parseArguments(_ args: [String]) throws -> CLIConfig {
             config.clipsDir = try readOptionValue(args, &index, option: arg)
         case "--output-jsonl":
             config.outputJSONLPath = try readOptionValue(args, &index, option: arg)
+        case "--explain-repl":
+            config.explainREPL = true
+        case "--history-k":
+            let value = try readOptionValue(args, &index, option: arg)
+            guard let parsed = Int(value), parsed > 0 else {
+                throw CLIError.invalidIntegerOption(option: arg, value: value)
+            }
+            config.historyMessageLimit = parsed
+        case "--chat-max-output-tokens":
+            let value = try readOptionValue(args, &index, option: arg)
+            guard let parsed = Int(value), parsed > 0 else {
+                throw CLIError.invalidIntegerOption(option: arg, value: value)
+            }
+            config.chatMaxOutputTokens = parsed
         case "--model-path":
             config.modelPath = try readOptionValue(args, &index, option: arg)
         case "--repo-root":
@@ -293,6 +329,9 @@ private func parseArguments(_ args: [String]) throws -> CLIConfig {
     if config.evalCSVPath != nil && config.videoPath != nil {
         throw CLIError.usage("--eval-csv 和单个视频路径不能同时使用。")
     }
+    if config.evalCSVPath != nil && config.explainREPL {
+        throw CLIError.usage("--explain-repl 只支持单个视频路径。")
+    }
     if config.evalCSVPath == nil && config.videoPath == nil {
         throw CLIError.usage("缺少视频路径，或缺少 --eval-csv。")
     }
@@ -319,6 +358,9 @@ private func usageText() -> String {
   --eval-csv <path>         批量评估 CSV，读取 Video_ID 和 B01-B09 标签
   --clips-dir <path>        视频目录，默认 data/raw/ASD-DS/clips_video
   --output-jsonl <path>     批量评估预测输出，默认 outputs/litert_cli_eval/predictions.jsonl
+  --explain-repl            单视频推理后进入解释对话 REPL，/quit 退出
+  --history-k <n>           REPL 中保留最近 n 条文本消息，默认 10
+  --chat-max-output-tokens <n> 解释/对话每轮最大输出 token，默认 512
   --model-path <path>       覆盖默认 .litertlm 模型路径
   --repo-root <path>        覆盖自动发现的仓库根目录
   --cache-dir <path>        覆盖 LiteRT-LM 编译缓存目录
@@ -584,6 +626,200 @@ private func generateResponse(
     contents.append(Content.text(userPrompt))
     let response = try await conversation.sendMessage(Message(contents: contents))
     return response.toString
+}
+
+private func runExplainREPL(
+    engine: Engine,
+    systemPrompt: String,
+    userPrompt: String,
+    code: String,
+    historyMessageLimit: Int,
+    chatMaxOutputTokens: Int
+) async throws {
+    let explainSystemPrompt = makeExplainSystemPrompt(from: systemPrompt)
+    let explainUserPrompt = makeExplainUserPrompt(from: userPrompt)
+    let assistantDiagnostic = assistantDiagnosticMessage(for: code)
+    var history: [ChatTextMessage] = []
+    var conversation = try await makeExplainConversation(
+        engine: engine,
+        systemPrompt: explainSystemPrompt,
+        userPrompt: explainUserPrompt,
+        assistantDiagnostic: assistantDiagnostic,
+        history: history,
+        historyMessageLimit: historyMessageLimit,
+        maxOutputTokens: chatMaxOutputTokens
+    )
+
+    print("")
+    print("解释对话：自动提问「为什么？」")
+    let firstQuestion = "为什么？"
+    let firstAnswer = try await sendExplainQuestion(
+        conversation: conversation,
+        question: firstQuestion,
+        userPrompt: explainUserPrompt
+    )
+    print("assistant: \(firstAnswer)")
+    history.append(ChatTextMessage(role: .user, text: firstQuestion))
+    history.append(ChatTextMessage(role: .model, text: firstAnswer))
+
+    print("")
+    print("进入交互模式，输入 /quit 退出。")
+    while true {
+        print("> ", terminator: "")
+        guard let line = readLine() else {
+            print("")
+            break
+        }
+        let question = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if question == "/quit" {
+            break
+        }
+        if question.isEmpty {
+            continue
+        }
+
+        let answer = try await sendExplainQuestion(
+            conversation: conversation,
+            question: question,
+            userPrompt: explainUserPrompt
+        )
+        print("assistant: \(answer)")
+        history.append(ChatTextMessage(role: .user, text: question))
+        history.append(ChatTextMessage(role: .model, text: answer))
+        if history.count > historyMessageLimit {
+            history = Array(history.suffix(historyMessageLimit))
+            conversation = try await makeExplainConversation(
+                engine: engine,
+                systemPrompt: explainSystemPrompt,
+                userPrompt: explainUserPrompt,
+                assistantDiagnostic: assistantDiagnostic,
+                history: history,
+                historyMessageLimit: historyMessageLimit,
+                maxOutputTokens: chatMaxOutputTokens
+            )
+        }
+    }
+}
+
+private func makeExplainConversation(
+    engine: Engine,
+    systemPrompt: String,
+    userPrompt: String,
+    assistantDiagnostic: String,
+    history: [ChatTextMessage],
+    historyMessageLimit: Int,
+    maxOutputTokens: Int
+) async throws -> Conversation {
+    let samplerConfig = try SamplerConfig(
+        topK: 1,
+        topP: 1.0,
+        temperature: 0.0
+    )
+    let retainedHistory = history.suffix(historyMessageLimit).map { message in
+        Message(message.text, role: message.role)
+    }
+    let initialMessages = [
+        Message(userPrompt, role: .user),
+        Message(assistantDiagnostic, role: .model)
+    ] + retainedHistory
+    let conversationConfig = ConversationConfig(
+        systemMessage: Message(systemPrompt),
+        initialMessages: initialMessages,
+        samplerConfig: samplerConfig,
+        maxOutputTokens: maxOutputTokens
+    )
+    return try await engine.createConversation(with: conversationConfig)
+}
+
+private func sendExplainQuestion(
+    conversation: Conversation,
+    question: String,
+    userPrompt: String
+) async throws -> String {
+    let message = Message(makeExplainQuestionText(question, userPrompt: userPrompt))
+    let response = try await conversation.sendMessage(message)
+    return response.toString.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func makeExplainSystemPrompt(from originalPrompt: String) -> String {
+    """
+你是一个行为筛查结果解释助手。你会参考编辑后的原始分类提示、上一条 assistant 诊断消息和最近对话，回答用户对结果的追问。
+
+编辑后的原始分类 system prompt，仅保留标签定义和任务边界：
+\(makeExplanationPromptReference(from: originalPrompt))
+
+解释阶段最终规则：
+分类阶段已经完成。9 位二进制标签码已经由上一条 assistant message 给出，当前阶段不得输出新的 9 位码。
+当前任务是解释上一条 assistant message 中已经生成的 raw code 和中文解析，并回答用户的后续追问。
+不要重新分类，不要改写上一条 raw code 的记录，不要主动否定上一条结果。
+当用户询问为什么某个标签被观察到时，优先解释该标签可能被触发的可观察依据；如果证据较弱，可以说“可能是”或“置信度有限”，但不要改判。
+只有当用户明确要求重新判别或复核时，才可以讨论上一条结果是否可能错误。
+每次回答最多 3 句话。不得使用 Markdown 格式，不得使用标题、编号、项目符号、星号或代码块。
+只做行为筛查支持说明，不要声称医学诊断。
+"""
+}
+
+private func makeExplainUserPrompt(from originalPrompt: String) -> String {
+    """
+编辑后的原始分类 user prompt，仅保留标签位序、标签含义和任务边界：
+\(makeExplanationPromptReference(from: originalPrompt))
+
+解释阶段补充说明：
+现在进入自然语言追问阶段；上一条 assistant message 已经给出 raw code 和中文解析。
+请结合上一条 assistant 诊断消息和最近对话，回答用户当前问题。
+不要输出新的 9 位二进制码，不要重新分类，不要主动否定上一条结果，不要使用 Markdown，每次回答最多 3 句话。
+"""
+}
+
+private func makeExplanationPromptReference(from prompt: String) -> String {
+    var edited = prompt
+    if let exampleRange = edited.range(of: "\n示例：") {
+        edited = String(edited[..<exampleRange.lowerBound])
+    }
+
+    let replacements = [
+        "只返回 B01 到 B09 的 9 位二进制标签码。":
+            "解释阶段不返回二进制标签码，只解释已经产生的标签结果。",
+        "请只输出一行 9 位二进制标签码。":
+            "解释阶段不再只输出二进制标签码。",
+        "必须匹配这个格式：\n^[01]{9}$":
+            "解释阶段不适用二进制格式约束。",
+        "必须匹配这个格式：":
+            "解释阶段不适用二进制格式约束。",
+        "^[01]{9}$":
+            "",
+        "- 不要输出 B10。":
+            "- B10 仍由应用端根据 B01 到 B09 派生。",
+        "- 不要输出 JSON。":
+            "- 解释阶段不输出 JSON。",
+        "- 不要输出标签名、空格、标点、Markdown、置信度或解释。":
+            "- 解释阶段可以输出标签名和简短解释，但不能使用 Markdown。",
+        "- 完整回答必须正好是 9 个字符。":
+            "- 解释阶段每次回答最多 3 句话。"
+    ]
+
+    for (source, replacement) in replacements {
+        edited = edited.replacingOccurrences(of: source, with: replacement)
+    }
+    return edited.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func makeExplainQuestionText(_ question: String, userPrompt: String) -> String {
+    """
+解释阶段当前轮规则：
+\(userPrompt)
+
+当前用户问题：
+\(question)
+
+请直接回答当前问题。上一条 assistant 的 raw code 是当前解释对象，不是待复核的新分类请求。
+不要输出新的 9 位二进制码，不要重新分类，不要主动改判，不要说“没有观察到该标签”或“之前判断错误”，除非用户明确要求复核。
+不要使用 Markdown，最多 3 句话。
+"""
+}
+
+private func assistantDiagnosticMessage(for code: String) -> String {
+    "上一条 assistant 诊断结果如下；这是后续解释对话的固定解释对象，不是新的分类请求。\n\n\(code)\n\n\(diagnosticExplanationText(for: code))"
 }
 
 private func loadEvalSamples(csvURL: URL, clipsDir: URL) throws -> [EvalSample] {
@@ -974,19 +1210,25 @@ private func printMetricsTable(modelName: String, metrics: Metrics) {
     )
 }
 
-private func printExplanation(for code: String) {
+private func diagnosticExplanationText(for code: String) -> String {
     let chars = Array(code)
     var anyPositive = false
+    var lines = ["解析结果："]
 
-    print("解析结果：")
     for (index, label) in featureLabels.enumerated() {
         let observed = chars[index] == "1"
         anyPositive = anyPositive || observed
-        print("- \(label.id) \(label.name)：\(observed ? "观察到" : "未观察到")")
+        lines.append("- \(label.id) \(label.name)：\(observed ? "观察到" : "未观察到")")
     }
 
-    print("- B10 背景类：\(!anyPositive ? "是" : "否")")
-    print("总体：\(anyPositive ? "观察到可见行为特征" : "未观察到 B01 到 B09 行为特征，归为背景类")")
+    lines.append("- B10 背景类：\(!anyPositive ? "是" : "否")")
+    lines.append("总体：\(anyPositive ? "观察到可见行为特征" : "未观察到 B01 到 B09 行为特征，归为背景类")")
+    lines.append("说明：以上是基于视频片段的行为筛查支持，不是医学诊断。")
+    return lines.joined(separator: "\n")
+}
+
+private func printExplanation(for code: String) {
+    print(diagnosticExplanationText(for: code))
 }
 
 @discardableResult

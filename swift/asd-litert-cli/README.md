@@ -33,3 +33,26 @@ swift run asd-litert-cli \
 ```
 
 CLI 会读取仓库内现有的 `prompts/zh/system.md` 和 `prompts/zh/user.md`，不会在 Swift 代码里改写 prompt。
+
+## 解释对话 REPL
+
+单视频推理后可以进入解释对话：
+
+```bash
+cd swift/asd-litert-cli
+./run.sh --explain-repl /path/to/video.mp4
+```
+
+流程：
+
+- 先按原流程输出加载时间、raw 9-bit code、中文解析结果。
+- CLI 会基于原始分类 system/user prompt 生成解释阶段 prompt，保留标签定义和任务边界，但替换/移除“只能输出 9-bit code”的格式约束。
+- CLI 会把 `raw code + 中文解析结果` 作为一条 assistant message 放进解释上下文。
+- CLI 自动追加用户问题 `为什么？`，打印模型回复。
+- 之后进入交互模式，输入 `/quit` 退出；解释阶段每次回复最多 3 句话，且不使用 Markdown。
+
+解释阶段不会重新发送视频帧，避免模型把后续追问当成新的视觉分类请求；它基于已经生成的 raw code、中文解析、解释阶段 prompt 和最近文本对话回答。默认保留最近 10 条文本消息：
+
+```bash
+./run.sh --explain-repl --history-k 10 --chat-max-output-tokens 512 /path/to/video.mp4
+```
