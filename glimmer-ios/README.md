@@ -78,15 +78,47 @@ cd ios
 
 ## 构建（iOS）
 
+### 签名与工程生成
+
+`ios/GemmaScreen.xcodeproj/` 是生成产物，已被 `.gitignore` 忽略。不要手改或提交其中的 `project.pbxproj`、workspace 或 scheme；如果需要改 target、build settings、资源、脚本阶段或 signing 引用，改 `ios/project.yml`，然后重新生成工程。
+
+本机签名配置只放在 `ios/.env`，不入库。首次配置：
+
+```bash
+cd ios
+cp .env.example .env
+```
+
+然后编辑 `.env`：
+
+| 变量 | 说明 |
+|---|---|
+| `GEMMASCREEN_PRODUCT_BUNDLE_IDENTIFIER` | 主 App bundle id |
+| `GEMMASCREEN_DEVELOPMENT_TEAM` | 主 App Apple Developer Team ID |
+| `GLIMMER_GALLERY_PRODUCT_BUNDLE_IDENTIFIER` | Gallery target bundle id |
+| `GLIMMER_GALLERY_DEVELOPMENT_TEAM` | Gallery target Apple Developer Team ID |
+
+每次 pull 后、`.env` 变化后、或 `project.yml` 变化后，都运行：
+
+```bash
+./Scripts/generate-xcodeproj.sh
+```
+
+这个脚本会加载 `.env`、校验必填变量，并用 `xcodegen generate` 生成 `GemmaScreen.xcodeproj`。这样签名变更只影响本机 `.env`，不会污染 Git 里的工程配置。
+
+### 真机构建
+
 ```bash
 cd ios
 ./Scripts/prepare-local-gguf-models.sh
-xcodegen generate
+./Scripts/generate-xcodeproj.sh
 xcodebuild -project GemmaScreen.xcodeproj -target GemmaScreen \
   -destination 'id=<DEVICE_UDID>' -allowProvisioningUpdates build
 ```
 
-本工程的核心代码和 native bridge 由 SwiftPM 管理；`GemmaScreen.xcodeproj` 只作为 iOS app host，负责 bundle、签名、entitlements 和安装运行。日常可以不打开 Xcode，直接用 `xcodegen` + `xcodebuild`。
+本工程的核心代码和 native bridge 由 SwiftPM 管理；`GemmaScreen.xcodeproj` 是由 `project.yml` 生成的 iOS app host，负责 bundle、签名、entitlements 和安装运行。日常可以不打开 Xcode，直接用 `./Scripts/generate-xcodeproj.sh` + `xcodebuild`。
+
+`.env` 保存本机签名配置，不入库；`project.yml` 通过 `${GEMMASCREEN_DEVELOPMENT_TEAM}`、`${GEMMASCREEN_PRODUCT_BUNDLE_IDENTIFIER}` 等变量读取本机值。不同开发者只需要维护自己的 `.env`。
 
 > 当前本机 Xcode 环境可能要求 iOS 26.4 runtime；如果 `xcodebuild` 报 destination 不可用，需要先在 Xcode Components 安装对应 runtime，或切到匹配的 Xcode/设备 SDK。
 
