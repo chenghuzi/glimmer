@@ -28,6 +28,6 @@ struct GlimmerNavBar: View {
             }
             .padding(.horizontal, 16)
         }
-        .frame(width: 375, height: 54)
+        .frame(maxWidth: .infinity, minHeight: 54)
     }
 }

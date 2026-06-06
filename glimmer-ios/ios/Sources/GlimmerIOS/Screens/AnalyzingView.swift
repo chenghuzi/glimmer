@@ -43,18 +43,21 @@ struct AnalyzingView: View {
     }
 
     var body: some View {
-        FigmaCanvas(background: Color(hex: 0xF2F2EC)) {
-            analysisCard
-                .figmaFrame(x: 16, y: 120, w: 343, h: 534, align: .center)
+        ZStack {
+            Color(hex: 0xF2F2EC).ignoresSafeArea()
 
-            GlimmerNavBar(title: "\(timestamp) 分析报告", onBack: onBack)
-                .figmaFrame(x: 0, y: 54, w: 375, h: 54, align: .top)
+            VStack(spacing: 12) {
+                GlimmerNavBar(title: "\(timestamp) 分析报告", onBack: onBack)
+                    .padding(.top, 8)
 
-            PlayerBar(title: "\(timestamp) 视频")
-                .figmaFrame(x: 16, y: 670, w: 343, h: 48, align: .center)
+                analysisCard
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            GlimmerTabBar(active: .report)
-                .figmaFrame(x: 0, y: 726, w: 375, h: 52, align: .top)
+                PlayerBar(title: "\(timestamp) 视频")
+
+                GlimmerTabBar(active: .report)
+            }
+            .padding(.horizontal, 16)
         }
     }
 
@@ -72,22 +75,24 @@ struct AnalyzingView: View {
                 .foregroundStyle(Color(hex: 0x6A685D))
             }
 
-            // 流式行为词列表 — 自动滚动到最新一行
+            // 流式行为词列表 — 自动滚动到最新一行，填满卡片剩余高度
             StreamingBehaviorList(lines: revealedLines)
-                .frame(height: kListHeight)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, 20)
-        .padding(.top, 40)
+        .padding(.top, 32)
+        .padding(.bottom, 12)
         // 同步 displayCode.count → targetCount（onChange 是 prop → @State 的桥梁）
         .onChange(of: displayCode.count, initial: true) { _, newCount in
             targetCount = newCount
         }
-        // UI 揭示完 10 项且模型也跑完时通知上层切到报告
+        // 跳转条件：模型跑完 且（揭示完 10 项 ‖ 无合法码=出错，没有可揭示项）
         .onChange(of: revealedCount) { _, newCount in
-            if newCount >= 10 && streamFinished { onAnimationDone() }
+            if streamFinished && newCount >= 10 { onAnimationDone() }
         }
         .onChange(of: streamFinished) { _, finished in
-            if finished && revealedCount >= 10 { onAnimationDone() }
+            guard finished else { return }
+            if revealedCount >= 10 || displayCode.isEmpty { onAnimationDone() }
         }
         // 节奏推进：单个长时任务读 @State targetCount（不能直接读 prop，闭包捕获的是初始快照）
         .task {
@@ -101,11 +106,9 @@ struct AnalyzingView: View {
                 }
             }
         }
-        .frame(width: 343, height: 534, alignment: .top)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(hex: 0xF6F6F5), in: RoundedRectangle(cornerRadius: 24))
     }
-
-    private let kListHeight: CGFloat = 132
 
     /// B01–B10 中文名（与 [behaviorFeatures](ReportView.swift:11) 保持一致）。
     /// 模型负责 B01–B09；B10 由 app 端补：当 B01-B09 都未观察到时 B10=true。

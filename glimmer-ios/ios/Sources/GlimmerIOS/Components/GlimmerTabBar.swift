@@ -14,7 +14,7 @@ struct GlimmerTabBar: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
-        .frame(width: 375, height: 52, alignment: .top)
+        .frame(maxWidth: .infinity, minHeight: 52, alignment: .top)
     }
 
     private func item(icon: String, label: String, on: Bool) -> some View {

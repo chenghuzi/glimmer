@@ -30,7 +30,7 @@ struct PlayerBar: View {
         .padding(.leading, 8)
         .padding(.trailing, 12)
         .padding(.vertical, 8)
-        .frame(width: 343, height: 48)
+        .frame(maxWidth: .infinity, minHeight: 48)
         .background(Color(hex: 0xF6F6F5), in: RoundedRectangle(cornerRadius: 24))
     }
 }
