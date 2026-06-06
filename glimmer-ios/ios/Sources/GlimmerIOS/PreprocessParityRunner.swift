@@ -13,17 +13,26 @@ enum PreprocessParityRunner {
         didStart = true
 
         let outputValue = environment["GLIMMER_PREPROCESS_PARITY_OUTPUT"] ?? "Documents/preprocess_parity_results.json"
+        let mediaOutputRootValue = environment["GLIMMER_PREPROCESS_PARITY_MEDIA_OUTPUT_ROOT"]
         let videoRoot = resolveContainerURL(videoRootValue)
         let outputURL = resolveContainerURL(outputValue)
+        let mediaOutputRootURL = mediaOutputRootValue
+            .flatMap { value -> URL? in
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return resolveContainerURL(trimmed)
+            }
 
         do {
-            let records = try await run(videoRoot: videoRoot)
+            let records = try await run(videoRoot: videoRoot, mediaOutputRoot: mediaOutputRootURL)
             try write(records: records, outputURL: outputURL)
             print("GLIMMER_PREPROCESS_PARITY_RESULTS \(outputURL.path)")
         } catch {
             let failure = PreprocessParityRecord(
+                sampleIndex: nil,
                 sampleID: "__failure__",
                 videoPath: videoRoot.path,
+                mediaDirectoryPath: nil,
                 frameCount: 0,
                 audioPath: nil,
                 diagnostics: nil,
@@ -34,21 +43,32 @@ enum PreprocessParityRunner {
         }
     }
 
-    private static func run(videoRoot: URL) async throws -> [PreprocessParityRecord] {
+    private static func run(videoRoot: URL, mediaOutputRoot: URL?) async throws -> [PreprocessParityRecord] {
         let videos = try videoURLs(in: videoRoot)
         guard !videos.isEmpty else {
             throw PreprocessParityError.missingVideos(videoRoot.path)
         }
+        if let mediaOutputRoot {
+            try FileManager.default.createDirectory(at: mediaOutputRoot, withIntermediateDirectories: true)
+        }
 
         var records: [PreprocessParityRecord] = []
-        for videoURL in videos {
+        for (sampleIndex, videoURL) in videos.enumerated() {
             let prepared = await VideoAudioPreprocessor.prepare(videoURL: videoURL)
+            let sampleID = videoURL.deletingPathExtension().lastPathComponent
+            let stableMedia = try copyPreparedMediaIfNeeded(
+                prepared: prepared,
+                sampleID: sampleID,
+                mediaOutputRoot: mediaOutputRoot
+            )
             records.append(
                 PreprocessParityRecord(
-                    sampleID: videoURL.deletingPathExtension().lastPathComponent,
+                    sampleIndex: sampleIndex,
+                    sampleID: sampleID,
                     videoPath: videoURL.path,
-                    frameCount: prepared.frameURLs.count,
-                    audioPath: prepared.audioURL?.path,
+                    mediaDirectoryPath: stableMedia.directory?.path,
+                    frameCount: stableMedia.frameURLs.count,
+                    audioPath: stableMedia.audioURL?.path,
                     diagnostics: prepared.diagnostics,
                     error: nil
                 )
@@ -80,6 +100,41 @@ enum PreprocessParityRunner {
             urls.append(url)
         }
         return urls.sorted { $0.path < $1.path }
+    }
+
+    private static func copyPreparedMediaIfNeeded(
+        prepared: PreparedGgufMedia,
+        sampleID: String,
+        mediaOutputRoot: URL?
+    ) throws -> (directory: URL?, frameURLs: [URL], audioURL: URL?) {
+        guard let mediaOutputRoot else {
+            return (nil, prepared.frameURLs, prepared.audioURL)
+        }
+
+        let sampleDirectory = mediaOutputRoot.appendingPathComponent(sampleID, isDirectory: true)
+        let fileManager = FileManager.default
+        try? fileManager.removeItem(at: sampleDirectory)
+        try fileManager.createDirectory(at: sampleDirectory, withIntermediateDirectories: true)
+
+        let copiedFrameURLs = try prepared.frameURLs
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .enumerated()
+            .map { index, sourceURL in
+                let destinationURL = sampleDirectory.appendingPathComponent(String(format: "frame_%04d.jpg", index))
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                return destinationURL
+            }
+
+        let copiedAudioURL: URL?
+        if let audioURL = prepared.audioURL {
+            let destinationURL = sampleDirectory.appendingPathComponent("audio_16k_mono.wav")
+            try fileManager.copyItem(at: audioURL, to: destinationURL)
+            copiedAudioURL = destinationURL
+        } else {
+            copiedAudioURL = nil
+        }
+
+        return (sampleDirectory, copiedFrameURLs, copiedAudioURL)
     }
 
     private static func isVideoFile(_ url: URL) -> Bool {
@@ -121,8 +176,10 @@ private struct PreprocessParityResult: Codable {
 }
 
 private struct PreprocessParityRecord: Codable {
+    let sampleIndex: Int?
     let sampleID: String
     let videoPath: String
+    let mediaDirectoryPath: String?
     let frameCount: Int
     let audioPath: String?
     let diagnostics: GgufMediaDiagnostics?
