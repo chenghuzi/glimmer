@@ -1,36 +1,48 @@
 import SwiftUI
 
 /// 屏1 启动页 — Figma 66:468 「启动App」
+///
+/// 自适应布局：奶油底铺满；光束贴底部全宽；吉祥物 + 字标在垂直中部成组；
+/// tagline 贴底（安全区内）。不依赖固定 375×812 画布。
 struct SplashView: View {
     var body: some View {
-        FigmaCanvas(background: GTheme.splashBg) {
-            // 底部光束（Figma 66:470，竖直翻转）
-            bundleImage("light_beam")
-                .resizable()
-                .scaledToFill()
-                .scaleEffect(y: -1)
-                .figmaFrame(x: 0, y: 355, w: 375, h: 457)
+        ZStack {
+            GTheme.splashBg.ignoresSafeArea()
 
-            // 毛绒星星吉祥物（Figma 66:473，旋转 -4.77°）
-            bundleImage("star_splash")
-                .resizable()
-                .scaledToFill()
-                .frame(width: 202, height: 202)
-                .rotationEffect(.degrees(-4.77))
-                .figmaFrame(x: 83, y: 164, w: 218.09, h: 218.09)
+            // 底部光束（66:470）—— 竖直翻转、全宽，作为字标背后的光晕
+            VStack {
+                Spacer()
+                bundleImage("light_beam")
+                    .resizable()
+                    .scaledToFit()
+                    .scaleEffect(y: -1)
+                    .frame(maxWidth: .infinity)
+            }
+            .ignoresSafeArea()
 
-            // Glimmer 字标（Figma 66:474）
-            bundleImage("glimmer_wordmark")
-                .resizable()
-                .scaledToFit()
-                .figmaFrame(x: 55, y: 352, w: 268, h: 73)
+            VStack(spacing: 8) {
+                Spacer()
 
-            // tagline（Figma 66:472）PingFang SC Regular 14 / rgba(41,41,31,0.6)
-            Text("和“微光”一起关爱“星星的孩子”")
-                .font(.system(size: 14))
-                .tracking(0.2)
-                .foregroundStyle(GTheme.subtle)
-                .figmaFrame(x: 88, y: 731, w: 199, h: 22)
+                // 毛绒星星吉祥物（66:473，旋转 -4.77°）
+                bundleImage("star_splash")
+                    .resizable().scaledToFit()
+                    .frame(width: 202, height: 202)
+                    .rotationEffect(.degrees(-4.77))
+
+                // Glimmer 字标（66:474）
+                bundleImage("glimmer_wordmark")
+                    .resizable().scaledToFit()
+                    .frame(width: 268)
+
+                Spacer()
+
+                // tagline（66:472）
+                Text("和“微光”一起关爱“星星的孩子”")
+                    .font(.system(size: 14))
+                    .tracking(0.2)
+                    .foregroundStyle(GTheme.subtle)
+                    .padding(.bottom, 40)
+            }
         }
     }
 }

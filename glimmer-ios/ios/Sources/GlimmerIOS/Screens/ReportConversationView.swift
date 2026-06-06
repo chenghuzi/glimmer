@@ -49,7 +49,7 @@ struct ReportConversationView: View {
                         if isResponding { typingIndicator }
                         Color.clear.frame(height: 220).id("__bottom__")
                     }
-                    .padding(.top, 120)
+                    .padding(.top, 76)
                     .padding(.horizontal, 16)
                 }
                 .onChange(of: messages.count) { _, _ in scrollToBottom(proxy) }
@@ -59,7 +59,7 @@ struct ReportConversationView: View {
             // 顶部 nav（带不透明背景，遮住下方滚动内容，避免叠字）
             VStack(spacing: 0) {
                 GlimmerNavBar(title: "\(timestamp) 分析报告", onBack: onBack)
-                    .padding(.top, 54)
+                    .padding(.top, 8)
                     .padding(.bottom, 6)
                     .background(GTheme.bg)
                 Spacer()
