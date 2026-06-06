@@ -108,6 +108,8 @@ targets:
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ${GLIMMER_GALLERY_DEVELOPMENT_TEAM}
+        # Large on-device inference needs the higher memory entitlement.
+        CODE_SIGN_ENTITLEMENTS: Gallery/GlimmerGallery.entitlements
         OTHER_LDFLAGS: -all_load
 schemes:
   GemmaScreen:
