@@ -9,13 +9,13 @@
 | 项 | 说明 |
 |---|---|
 | 运行时 | **llama.cpp b9536 / GGUF / Metal / mtmd**（vendored 为 `ios/Vendor/llama.xcframework`） |
-| 模型 | `model-Q4_K_M.gguf` + `mmproj-bf16.gguf`（主模型 + 多模态 projector，合计约 5.9GB，不入库） |
+| 模型 | `model-Q4_K_M.gguf` + `mmproj-bf16.gguf`（主模型 + 多模态 projector，合计约 5.9GB，不入库、不随包；首次启动自动下载） |
 | 输入 | 视频抽帧（最多 32 帧）→ 音频 WAV（最多 30 秒）→ 中文文字指令 |
 | 输出 | 模型只产出 **B01–B09 的 9 位二进制码**（`^[01]{9}$`）；最终 JSON（含 B10）由 **app 端拼装**后渲染为中文报告 |
 | 解释对话 | 报告完成后新建一个包含同一批 frames/audio 的 explanation conversation；后续用户只追加文本问题 |
 | 设备 | iPhone 真机优先使用 Metal；模拟器/本机编译路径用于集成验证 |
 
-> 当前不再走旧的 `.litertlm` 路径。旧文件如果还在 `ios/Model/`，不会被当前 `project.yml` 和 `ScreeningService` 引用。
+> 当前不再走旧的 `.litertlm` 路径，也不把 GGUF 权重打进 app bundle。旧文件如果还在 `ios/Model/`，不会被当前 `project.yml` 和 `ScreeningService` 引用。
 
 ## 接入规范（对齐模型侧官方文档）
 
@@ -36,7 +36,7 @@
 - ✅ 已生成 `ios/Vendor/llama.xcframework`，包含 `libllama`、`ggml`、`ggml-metal`、`ggml-blas`、`mtmd`。
 - ✅ 报告页已支持本地解释对话：新建 multimodal explanation session，后续文本追问复用同一 session/KV cache。
 - ✅ 已加真机 parity runner：可分别测试预构建 media 目录推理，以及 raw video → iOS preprocessing 的诊断输出。
-- ⚠️ 真机运行前需要把两个 GGUF 权重复制成 `ios/Model/` 下的真实文件；下载权重流程后续再做。
+- ✅ 首次启动自动下载两个 GGUF 权重到 Application Support，支持 `.part` 断点续传和 sha256 校验；同一模型 URL 已校验通过后，升级 app 不会重新下载。
 
 ## 目录
 
@@ -53,28 +53,23 @@
   - `Sources/AsdGgufNative/` — Objective-C++ bridge，直接调用 llama.cpp / mtmd / grammar sampler
   - `Sources/GlimmerIOS/ReportView.swift` — B01–B10 严格校验 + 报告渲染
   - `Vendor/` — `llama.xcframework`
-  - `Model/` — 放 `model-Q4_K_M.gguf` 和 `mmproj-bf16.gguf`（不入库，见「模型获取与放置」）
+  - `Resources/ModelManifest.json` — 远程 GGUF URL、size 和 sha256 manifest
 - `docs/ios_gguf_code9_waudio_integration.md` — GGUF 接入规范（输入/输出/问题诊断）
 - `finetune/` — LoRA 微调脚本与数据格式
 - `data/` — 样例数据集
 
-## 模型获取与放置
+## 模型下载
 
-模型权重**不入库**（`.gguf` 与 `ios/Model/` 已在 `.gitignore` 忽略）。当前真机测试先使用本地复制，后续再做下载权重：
+模型权重**不入库、不随包**。app 首次启动时会读取 `ios/Resources/ModelManifest.json`，把两个 GGUF 下载到沙盒的 `Application Support/GlimmerModels/`：
 
 | 项 | 值 |
 |---|---|
-| 主模型 | `outputs/gguf_experiments/gemma4-asd-code9-waudio-step420/model-Q4_K_M.gguf` |
-| projector | `outputs/gguf_experiments/gemma4-asd-code9-waudio-step420/mmproj-bf16.gguf` |
-| 放置路径 | `ios/Model/model-Q4_K_M.gguf` 和 `ios/Model/mmproj-bf16.gguf` |
+| 主模型 | `https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf/resolve/main/model-Q4_K_M.gguf` |
+| projector | `https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf/resolve/main/mmproj-bf16.gguf` |
+| 本地路径 | `Application Support/GlimmerModels/model-Q4_K_M.gguf` 和 `Application Support/GlimmerModels/mmproj-bf16.gguf` |
 | 大小 | 主模型约 4.9GB，projector 约 946MB |
 
-```bash
-cd ios
-./Scripts/prepare-local-gguf-models.sh
-```
-
-> 真机构建前必须运行上面的脚本。`project.yml` 的 pre/post build script 会检查 bundle 里是非空真实文件，不允许把 symlink 打进 app。
+下载完成后会写入同目录 receipt。只要 manifest 里的 URL 不变，且本地 receipt 与文件 size 匹配，app 升级不会重新下载。若 URL 变化，app 会重新校验本地文件；校验不通过才重新下载。
 
 ## 构建（iOS）
 
@@ -110,7 +105,6 @@ cp .env.example .env
 
 ```bash
 cd ios
-./Scripts/prepare-local-gguf-models.sh
 ./Scripts/generate-xcodeproj.sh
 xcodebuild -project GemmaScreen.xcodeproj -target GemmaScreen \
   -destination 'id=<DEVICE_UDID>' -allowProvisioningUpdates build

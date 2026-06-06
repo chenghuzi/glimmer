@@ -1,81 +1,275 @@
 import Foundation
 
-/// 模型下载管理：首启把 ModelCatalog.items 下载到本地，聚合进度驱动「加载模型页面」。
-/// 占位地址下走模拟进度，方便联调 UI；配置真实地址后即为真实 URLSession 下载。
+enum ModelDownloadError: LocalizedError {
+    case invalidResponse
+    case httpStatus(Int)
+    case incompleteFile(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse:
+            return "Model download returned an invalid response."
+        case .httpStatus(let status):
+            return "Model download failed with HTTP status \(status)."
+        case .incompleteFile(let filename):
+            return "Model download did not complete: \(filename)."
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class ModelDownloadManager {
-    enum Phase: Equatable { case idle, downloading, ready, failed(String) }
+    enum Phase: Equatable {
+        case idle
+        case downloading
+        case ready
+        case failed(String)
+    }
 
-    var progress: CGFloat = 0          // 0...1 聚合进度
-    var statusText: String = "本地分析模型准备中，请稍候…"
+    var progress: CGFloat = 0
     var phase: Phase = .idle
 
-    var isReady: Bool { phase == .ready }
+    var isReady: Bool {
+        phase == .ready
+    }
+
+    var hasTrustedModels: Bool {
+        ModelCatalog.allFilesTrusted()
+    }
 
     func start() async {
-        guard phase == .idle else { return }
+        guard phase != .downloading else {
+            return
+        }
 
-        // 已就绪（下载过 / 随包）则直接完成
-        if ModelCatalog.items.allSatisfy({ ModelCatalog.isDownloaded($0) || bundled($0) }) {
-            progress = 1; statusText = "模型已就绪"; phase = .ready
+        if hasTrustedModels {
+            progress = 1
+            phase = .ready
             return
         }
 
         phase = .downloading
-        try? FileManager.default.createDirectory(
-            at: ModelCatalog.directory, withIntermediateDirectories: true)
-
-        if ModelCatalog.usesPlaceholderURLs {
-            await simulate()
-            return
-        }
-
         do {
-            try await downloadAll()
-            progress = 1; statusText = "模型已就绪"; phase = .ready
+            try FileManager.default.createDirectory(
+                at: ModelCatalog.directory,
+                withIntermediateDirectories: true
+            )
+            try await prepareModels()
+            progress = 1
+            phase = .ready
         } catch {
-            statusText = "模型下载失败，请检查网络后重试"
             phase = .failed(error.localizedDescription)
         }
     }
 
-    private func bundled(_ item: ModelCatalog.Item) -> Bool {
-        Bundle.main.url(forResource: item.resource, withExtension: "gguf") != nil
-    }
+    private func prepareModels() async throws {
+        let items = ModelCatalog.items
+        let totalBytes = max(items.reduce(Int64(0)) { $0 + $1.byteSize }, 1)
+        var completedBytes: Int64 = 0
 
-    // MARK: - 真实下载（按内容长度加权聚合进度）
+        for item in items {
+            if try await ModelCatalog.validateExistingFileIfNeeded(item) {
+                completedBytes += item.byteSize
+                updateProgress(completedBytes: completedBytes, totalBytes: totalBytes)
+                continue
+            }
 
-    private func downloadAll() async throws {
-        let missing = ModelCatalog.items.filter { !ModelCatalog.isDownloaded($0) && !bundled($0) }
-        let total = missing.count
-        for (idx, item) in missing.enumerated() {
-            statusText = "正在下载模型 (\(idx + 1)/\(total))…"
-            try await download(item, base: CGFloat(idx) / CGFloat(total),
-                               span: 1.0 / CGFloat(total))
+            ModelCatalog.removeLocalFile(item)
+
+            let partialBytes = ModelCatalog.validPartialSize(item)
+            updateProgress(completedBytes: completedBytes + partialBytes, totalBytes: totalBytes)
+
+            if partialBytes == item.byteSize {
+                try ModelCatalog.installValidatedPartial(item)
+            } else {
+                try await download(item: item, completedBeforeItem: completedBytes, totalBytes: totalBytes)
+                try ModelCatalog.installValidatedPartial(item)
+            }
+
+            completedBytes += item.byteSize
+            updateProgress(completedBytes: completedBytes, totalBytes: totalBytes)
         }
     }
 
-    private func download(_ item: ModelCatalog.Item, base: CGFloat, span: CGFloat) async throws {
-        // TODO: 接入真实 CDN 后可改用 URLSessionDownloadDelegate 上报细粒度进度。
-        // 现按文件粒度推进（多 GB 文件按字节累加会过慢）。
-        let (tempURL, _) = try await URLSession.shared.download(from: item.remoteURL)
-        let dest = ModelCatalog.localURL(item)
-        try? FileManager.default.removeItem(at: dest)
-        try FileManager.default.moveItem(at: tempURL, to: dest)
-        progress = base + span
+    private func download(
+        item: ModelCatalog.Item,
+        completedBeforeItem: Int64,
+        totalBytes: Int64
+    ) async throws {
+        let downloader = ResumableFileDownloader(
+            remoteURL: item.url,
+            destinationURL: ModelCatalog.partialURL(item),
+            expectedByteCount: item.byteSize
+        ) { [weak self] currentBytes in
+            Task { @MainActor in
+                self?.updateProgress(
+                    completedBytes: completedBeforeItem + currentBytes,
+                    totalBytes: totalBytes
+                )
+            }
+        }
+        try await downloader.start()
     }
 
-    // MARK: - 占位模拟（无真实地址时演示 UI）
+    private func updateProgress(completedBytes: Int64, totalBytes: Int64) {
+        let value = Double(completedBytes) / Double(totalBytes)
+        progress = CGFloat(max(0, min(1, value)))
+    }
+}
 
-    private func simulate() async {
-        statusText = "本地分析模型准备中，请稍候…"
-        let steps = 40
-        for i in 1...steps {
-            try? await Task.sleep(for: .milliseconds(60))
-            progress = CGFloat(i) / CGFloat(steps)
+private final class ResumableFileDownloader: NSObject, URLSessionDataDelegate {
+    private let remoteURL: URL
+    private let destinationURL: URL
+    private let expectedByteCount: Int64
+    private let onProgress: @Sendable (Int64) -> Void
+    private let delegateQueue: OperationQueue
+
+    private var session: URLSession?
+    private var fileHandle: FileHandle?
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var pendingError: Error?
+    private var downloadedByteCount: Int64
+    private var initialByteCount: Int64
+
+    init(
+        remoteURL: URL,
+        destinationURL: URL,
+        expectedByteCount: Int64,
+        onProgress: @escaping @Sendable (Int64) -> Void
+    ) {
+        self.remoteURL = remoteURL
+        self.destinationURL = destinationURL
+        self.expectedByteCount = expectedByteCount
+        self.onProgress = onProgress
+        self.initialByteCount = ModelCatalog.fileSize(destinationURL)
+        self.downloadedByteCount = self.initialByteCount
+
+        let queue = OperationQueue()
+        queue.name = "GlimmerModelDownloadDelegate"
+        queue.maxConcurrentOperationCount = 1
+        self.delegateQueue = queue
+
+        super.init()
+    }
+
+    func start() async throws {
+        if initialByteCount > expectedByteCount {
+            try? FileManager.default.removeItem(at: destinationURL)
+            initialByteCount = 0
+            downloadedByteCount = 0
         }
-        statusText = "模型已就绪"
-        phase = .ready
+
+        if initialByteCount == expectedByteCount {
+            onProgress(downloadedByteCount)
+            return
+        }
+
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+
+            var request = URLRequest(url: remoteURL)
+            request.timeoutInterval = 60
+            if initialByteCount > 0 {
+                request.setValue("bytes=\(initialByteCount)-", forHTTPHeaderField: "Range")
+            }
+
+            let configuration = URLSessionConfiguration.default
+            configuration.timeoutIntervalForRequest = 60
+            configuration.timeoutIntervalForResource = 60 * 60 * 12
+
+            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: delegateQueue)
+            self.session = session
+            session.dataTask(with: request).resume()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let http = response as? HTTPURLResponse else {
+            pendingError = ModelDownloadError.invalidResponse
+            completionHandler(.cancel)
+            return
+        }
+
+        do {
+            switch http.statusCode {
+            case 200:
+                if initialByteCount > 0 {
+                    try? FileManager.default.removeItem(at: destinationURL)
+                    initialByteCount = 0
+                    downloadedByteCount = 0
+                }
+                try openFileForWriting(append: false)
+            case 206:
+                try openFileForWriting(append: initialByteCount > 0)
+            default:
+                pendingError = ModelDownloadError.httpStatus(http.statusCode)
+                completionHandler(.cancel)
+                return
+            }
+            onProgress(downloadedByteCount)
+            completionHandler(.allow)
+        } catch {
+            pendingError = error
+            completionHandler(.cancel)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        do {
+            try fileHandle?.write(contentsOf: data)
+            downloadedByteCount += Int64(data.count)
+            onProgress(downloadedByteCount)
+
+            if downloadedByteCount > expectedByteCount {
+                pendingError = ModelDownloadError.incompleteFile(destinationURL.lastPathComponent)
+                dataTask.cancel()
+            }
+        } catch {
+            pendingError = error
+            dataTask.cancel()
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        try? fileHandle?.close()
+        fileHandle = nil
+        session.invalidateAndCancel()
+        self.session = nil
+
+        if let pendingError {
+            continuation?.resume(throwing: pendingError)
+        } else if let error {
+            continuation?.resume(throwing: error)
+        } else if downloadedByteCount != expectedByteCount {
+            continuation?.resume(
+                throwing: ModelDownloadError.incompleteFile(destinationURL.lastPathComponent)
+            )
+        } else {
+            continuation?.resume()
+        }
+        continuation = nil
+    }
+
+    private func openFileForWriting(append: Bool) throws {
+        let directory = destinationURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        if !FileManager.default.fileExists(atPath: destinationURL.path) {
+            FileManager.default.createFile(atPath: destinationURL.path, contents: nil)
+        }
+
+        let handle = try FileHandle(forWritingTo: destinationURL)
+        if append {
+            try handle.seekToEnd()
+        } else {
+            try handle.truncate(atOffset: 0)
+        }
+        fileHandle = handle
     }
 }

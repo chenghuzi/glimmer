@@ -38,7 +38,7 @@ enum ParityTestRunner {
     }
 
     private static func run(mediaRoot: URL) async throws -> [ParityRecord] {
-        let modelFiles = try bundledModelFiles()
+        let modelFiles = try localModelFiles()
         let runner = AsdGgufRunner()
         try await runner.load(modelFiles: modelFiles)
 
@@ -70,14 +70,8 @@ enum ParityTestRunner {
         return records
     }
 
-    private static func bundledModelFiles() throws -> AsdGgufModelFiles {
-        guard let modelURL = Bundle.main.url(forResource: "model-Q4_K_M", withExtension: "gguf") else {
-            throw AsdGgufRunnerError.missingModel
-        }
-        guard let mmprojURL = Bundle.main.url(forResource: "mmproj-bf16", withExtension: "gguf") else {
-            throw AsdGgufRunnerError.missingMmproj
-        }
-        return AsdGgufModelFiles(modelURL: modelURL, mmprojURL: mmprojURL)
+    private static func localModelFiles() throws -> AsdGgufModelFiles {
+        try ModelCatalog.resolvedModelFiles()
     }
 
     private static func sampleDirectories(mediaRoot: URL) throws -> [URL] {
