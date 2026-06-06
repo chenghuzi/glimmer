@@ -7,31 +7,84 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0C6D561AC40B7343337D202F /* tab_analyze.png in Resources */ = {isa = PBXBuildFile; fileRef = F50E5FF23032146E3A292AD6 /* tab_analyze.png */; };
+		17099357054F7EADBF9D96C0 /* glimmer_wordmark.png in Resources */ = {isa = PBXBuildFile; fileRef = 5D63935F0D5A7EC7D8030E30 /* glimmer_wordmark.png */; };
+		1C87BCF868601F3FF000F31B /* duck.png in Resources */ = {isa = PBXBuildFile; fileRef = F4BF7553A935DE14359D6A4D /* duck.png */; };
 		2C97FDC5462D22708F4887BC /* GemmaScreenHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150E0CEEB930B1786D250C61 /* GemmaScreenHostApp.swift */; };
+		2ED00D40178DB4E4CBB85750 /* tab_analyze.png in Resources */ = {isa = PBXBuildFile; fileRef = F50E5FF23032146E3A292AD6 /* tab_analyze.png */; };
+		337627828D4C4D4DFAD068B9 /* star_splash.png in Resources */ = {isa = PBXBuildFile; fileRef = 064EEA933D0BD0289350339A /* star_splash.png */; };
+		3CC7C6B5AF84B8D5EAACC325 /* GlimmerGalleryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E543F4878CF2171E0F6227A6 /* GlimmerGalleryApp.swift */; };
+		3FA653710877C76EB3835E9E /* star_peek.png in Resources */ = {isa = PBXBuildFile; fileRef = C35ECF0F26AFD4E596376922 /* star_peek.png */; };
+		41C9E98F74C555BB594028BB /* GlimmerIOS in Frameworks */ = {isa = PBXBuildFile; productRef = 6978095DF4877832B6B17915 /* GlimmerIOS */; };
 		484A01B7FDDEA11C83037D8E /* sample_pos.jpg in Resources */ = {isa = PBXBuildFile; fileRef = E9B954A2566A00FE2757E870 /* sample_pos.jpg */; };
+		4FA78C29074F5FCC0BBCF182 /* sample_neg.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5269FACE3367A18D5A595080 /* sample_neg.jpg */; };
+		5742BAC182CC49572C7F4FEA /* phone_rec.png in Resources */ = {isa = PBXBuildFile; fileRef = CBAA3B8AF240F08677D969D3 /* phone_rec.png */; };
+		64DA93B2BD00B4DE6965AB8F /* icon_menu.png in Resources */ = {isa = PBXBuildFile; fileRef = 8588D48E122BDF6327DAACE7 /* icon_menu.png */; };
+		72E3E77888ED32AA91A4C50D /* icon_play.png in Resources */ = {isa = PBXBuildFile; fileRef = E8C4C001A784680AC1D05D34 /* icon_play.png */; };
+		75E64E4838C13039D92D51C0 /* glimmer_wordmark.png in Resources */ = {isa = PBXBuildFile; fileRef = 5D63935F0D5A7EC7D8030E30 /* glimmer_wordmark.png */; };
+		7A43840627DEE10379D4A41B /* icon_play.png in Resources */ = {isa = PBXBuildFile; fileRef = E8C4C001A784680AC1D05D34 /* icon_play.png */; };
 		824AF9D8AB67861A91F6B9B4 /* mmproj-bf16.gguf in Resources */ = {isa = PBXBuildFile; fileRef = 1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */; };
+		82702FE9D1786C6A5755D8A3 /* icon_ai_small.png in Resources */ = {isa = PBXBuildFile; fileRef = 9396676C1D70309187F7B3B8 /* icon_ai_small.png */; };
 		8496FA155CAAF2DFF67C2CEF /* GlimmerIOS in Frameworks */ = {isa = PBXBuildFile; productRef = A6EB668DD5DD39CE5114C3AA /* GlimmerIOS */; };
+		96FA8C7C5CD1A7232B5512D4 /* star_knob.png in Resources */ = {isa = PBXBuildFile; fileRef = 80DB9C005589768339E7D5B7 /* star_knob.png */; };
+		A79C0CAA6120275C177EC8B9 /* star_peek.png in Resources */ = {isa = PBXBuildFile; fileRef = C35ECF0F26AFD4E596376922 /* star_peek.png */; };
+		A7F0F0C795BDA285FD6F7343 /* light_beam.png in Resources */ = {isa = PBXBuildFile; fileRef = A2ED7CCDE95191949FDD446A /* light_beam.png */; };
+		AFE5FA9B02CB178334458C0C /* tab_report.png in Resources */ = {isa = PBXBuildFile; fileRef = 233EA42F67E52DD518BB4765 /* tab_report.png */; };
+		B39CBCE20A86B0C7E989EB5E /* icon_ai_small.png in Resources */ = {isa = PBXBuildFile; fileRef = 9396676C1D70309187F7B3B8 /* icon_ai_small.png */; };
+		B67A68B827E602D1A3F71F7E /* phone.png in Resources */ = {isa = PBXBuildFile; fileRef = 228261E7D56C871809233EF5 /* phone.png */; };
 		BA8E07EB1CCD3216B123B8F2 /* phone.png in Resources */ = {isa = PBXBuildFile; fileRef = 228261E7D56C871809233EF5 /* phone.png */; };
+		BBED955BD0A708330945F041 /* icon_chevron_back.png in Resources */ = {isa = PBXBuildFile; fileRef = E2525E46FB962B31E88E2FAE /* icon_chevron_back.png */; };
+		C29FA99498FC95B977A6516B /* icon_chevron_back.png in Resources */ = {isa = PBXBuildFile; fileRef = E2525E46FB962B31E88E2FAE /* icon_chevron_back.png */; };
+		D0AC16EA3FB450FB4C9588FA /* phone_rec.png in Resources */ = {isa = PBXBuildFile; fileRef = CBAA3B8AF240F08677D969D3 /* phone_rec.png */; };
+		DF0C897BB2395454BF8FEC0C /* star_knob.png in Resources */ = {isa = PBXBuildFile; fileRef = 80DB9C005589768339E7D5B7 /* star_knob.png */; };
+		E11E930FAA063C2AEBB5B6F3 /* sample_pos.jpg in Resources */ = {isa = PBXBuildFile; fileRef = E9B954A2566A00FE2757E870 /* sample_pos.jpg */; };
+		F4EB7B2209ED64CDFAACA2EF /* light_beam.png in Resources */ = {isa = PBXBuildFile; fileRef = A2ED7CCDE95191949FDD446A /* light_beam.png */; };
+		F634262A13061BFB96E804EE /* tab_report.png in Resources */ = {isa = PBXBuildFile; fileRef = 233EA42F67E52DD518BB4765 /* tab_report.png */; };
+		F6DAFC7839E8D6425CEC58DB /* star_splash.png in Resources */ = {isa = PBXBuildFile; fileRef = 064EEA933D0BD0289350339A /* star_splash.png */; };
 		F85D88D398B677E48AA11384 /* model-Q4_K_M.gguf in Resources */ = {isa = PBXBuildFile; fileRef = 24A64C1E7E2435E60BA79368 /* model-Q4_K_M.gguf */; };
 		F9481640D1429695645FBBB3 /* duck.png in Resources */ = {isa = PBXBuildFile; fileRef = F4BF7553A935DE14359D6A4D /* duck.png */; };
+		FDA3DB1B43BACDD4A14C1868 /* icon_menu.png in Resources */ = {isa = PBXBuildFile; fileRef = 8588D48E122BDF6327DAACE7 /* icon_menu.png */; };
 		FF47FB7DE6E3AF3D6887380E /* sample_neg.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5269FACE3367A18D5A595080 /* sample_neg.jpg */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		064EEA933D0BD0289350339A /* star_splash.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = star_splash.png; sourceTree = "<group>"; };
 		0FD27B70134137C85DC9BB3A /* GemmaScreen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GemmaScreen.entitlements; sourceTree = "<group>"; };
 		150E0CEEB930B1786D250C61 /* GemmaScreenHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GemmaScreenHostApp.swift; sourceTree = "<group>"; };
-		1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "mmproj-bf16.gguf"; sourceTree = "<group>"; };
+		1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */ = {isa = PBXFileReference; path = "mmproj-bf16.gguf"; sourceTree = "<group>"; };
 		228261E7D56C871809233EF5 /* phone.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = phone.png; sourceTree = "<group>"; };
-		24A64C1E7E2435E60BA79368 /* model-Q4_K_M.gguf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-Q4_K_M.gguf"; sourceTree = "<group>"; };
-		3419208DA37B81490B0596DA /* GemmaScreen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GemmaScreen.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		233EA42F67E52DD518BB4765 /* tab_report.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = tab_report.png; sourceTree = "<group>"; };
+		24A64C1E7E2435E60BA79368 /* model-Q4_K_M.gguf */ = {isa = PBXFileReference; path = "model-Q4_K_M.gguf"; sourceTree = "<group>"; };
+		3419208DA37B81490B0596DA /* GemmaScreen.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GemmaScreen.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4B1768EB679DCA829DD213F3 /* ios */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ios; path = .; sourceTree = SOURCE_ROOT; };
 		5269FACE3367A18D5A595080 /* sample_neg.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = sample_neg.jpg; sourceTree = "<group>"; };
+		5D63935F0D5A7EC7D8030E30 /* glimmer_wordmark.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = glimmer_wordmark.png; sourceTree = "<group>"; };
+		80DB9C005589768339E7D5B7 /* star_knob.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = star_knob.png; sourceTree = "<group>"; };
+		8588D48E122BDF6327DAACE7 /* icon_menu.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = icon_menu.png; sourceTree = "<group>"; };
+		9396676C1D70309187F7B3B8 /* icon_ai_small.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = icon_ai_small.png; sourceTree = "<group>"; };
 		9C6D5993D5439A74A1484691 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		A2ED7CCDE95191949FDD446A /* light_beam.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = light_beam.png; sourceTree = "<group>"; };
+		C35ECF0F26AFD4E596376922 /* star_peek.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = star_peek.png; sourceTree = "<group>"; };
+		CBAA3B8AF240F08677D969D3 /* phone_rec.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = phone_rec.png; sourceTree = "<group>"; };
+		E2525E46FB962B31E88E2FAE /* icon_chevron_back.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = icon_chevron_back.png; sourceTree = "<group>"; };
+		E543F4878CF2171E0F6227A6 /* GlimmerGalleryApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlimmerGalleryApp.swift; sourceTree = "<group>"; };
+		E8C4C001A784680AC1D05D34 /* icon_play.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = icon_play.png; sourceTree = "<group>"; };
+		E95A8B8C2192DD7A12D5C05B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E9B954A2566A00FE2757E870 /* sample_pos.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = sample_pos.jpg; sourceTree = "<group>"; };
 		F4BF7553A935DE14359D6A4D /* duck.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = duck.png; sourceTree = "<group>"; };
+		F50E5FF23032146E3A292AD6 /* tab_analyze.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = tab_analyze.png; sourceTree = "<group>"; };
+		FC6B9D6904DE68E841E394F1 /* GlimmerGallery.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GlimmerGallery.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		2CD4AACB8E024773E0DBB460 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				41C9E98F74C555BB594028BB /* GlimmerIOS in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		E15741C9F76C64AA4D4F970A /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -47,6 +100,7 @@
 			isa = PBXGroup;
 			children = (
 				3419208DA37B81490B0596DA /* GemmaScreen.app */,
+				FC6B9D6904DE68E841E394F1 /* GlimmerGallery.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -57,6 +111,15 @@
 				4B1768EB679DCA829DD213F3 /* ios */,
 			);
 			name = Packages;
+			sourceTree = "<group>";
+		};
+		3013381F735E8754161F0C2D /* Gallery */ = {
+			isa = PBXGroup;
+			children = (
+				E543F4878CF2171E0F6227A6 /* GlimmerGalleryApp.swift */,
+				E95A8B8C2192DD7A12D5C05B /* Info.plist */,
+			);
+			path = Gallery;
 			sourceTree = "<group>";
 		};
 		A1B33015E3EE7FE181CE07BC /* App */ = {
@@ -73,9 +136,21 @@
 			isa = PBXGroup;
 			children = (
 				F4BF7553A935DE14359D6A4D /* duck.png */,
+				5D63935F0D5A7EC7D8030E30 /* glimmer_wordmark.png */,
+				9396676C1D70309187F7B3B8 /* icon_ai_small.png */,
+				E2525E46FB962B31E88E2FAE /* icon_chevron_back.png */,
+				8588D48E122BDF6327DAACE7 /* icon_menu.png */,
+				E8C4C001A784680AC1D05D34 /* icon_play.png */,
+				A2ED7CCDE95191949FDD446A /* light_beam.png */,
+				CBAA3B8AF240F08677D969D3 /* phone_rec.png */,
 				228261E7D56C871809233EF5 /* phone.png */,
 				5269FACE3367A18D5A595080 /* sample_neg.jpg */,
 				E9B954A2566A00FE2757E870 /* sample_pos.jpg */,
+				80DB9C005589768339E7D5B7 /* star_knob.png */,
+				C35ECF0F26AFD4E596376922 /* star_peek.png */,
+				064EEA933D0BD0289350339A /* star_splash.png */,
+				F50E5FF23032146E3A292AD6 /* tab_analyze.png */,
+				233EA42F67E52DD518BB4765 /* tab_report.png */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -93,6 +168,7 @@
 			isa = PBXGroup;
 			children = (
 				A1B33015E3EE7FE181CE07BC /* App */,
+				3013381F735E8754161F0C2D /* Gallery */,
 				E3C8C12B0519B2B8C832AE99 /* Model */,
 				1E908BF53FE57415552C3AF2 /* Packages */,
 				AF99EAA21695FAB66AFACE29 /* Resources */,
@@ -103,6 +179,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		091C018ABFB88ACA719379C4 /* GlimmerGallery */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 772D1CF239AD5BEB4CF7CF29 /* Build configuration list for PBXNativeTarget "GlimmerGallery" */;
+			buildPhases = (
+				FF66DAE4A630AD0A39D43186 /* Sources */,
+				3F88960EB0644D6C8EA4F911 /* Resources */,
+				2CD4AACB8E024773E0DBB460 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = GlimmerGallery;
+			packageProductDependencies = (
+				6978095DF4877832B6B17915 /* GlimmerIOS */,
+			);
+			productName = GlimmerGallery;
+			productReference = FC6B9D6904DE68E841E394F1 /* GlimmerGallery.app */;
+			productType = "com.apple.product-type.application";
+		};
 		8B7799559E9905FC6C772239 /* GemmaScreen */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0AAEEE4B6FB4D4A7E9A6ADC3 /* Build configuration list for PBXNativeTarget "GemmaScreen" */;
@@ -134,7 +230,12 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					091C018ABFB88ACA719379C4 = {
+						DevelopmentTeam = XN9XFCT4XH;
+						ProvisioningStyle = Automatic;
+					};
 					8B7799559E9905FC6C772239 = {
+						DevelopmentTeam = XN9XFCT4XH;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -157,6 +258,7 @@
 			projectRoot = "";
 			targets = (
 				8B7799559E9905FC6C772239 /* GemmaScreen */,
+				091C018ABFB88ACA719379C4 /* GlimmerGallery */,
 			);
 		};
 /* End PBXProject section */
@@ -167,11 +269,46 @@
 			buildActionMask = 2147483647;
 			files = (
 				F9481640D1429695645FBBB3 /* duck.png in Resources */,
+				17099357054F7EADBF9D96C0 /* glimmer_wordmark.png in Resources */,
+				82702FE9D1786C6A5755D8A3 /* icon_ai_small.png in Resources */,
+				BBED955BD0A708330945F041 /* icon_chevron_back.png in Resources */,
+				64DA93B2BD00B4DE6965AB8F /* icon_menu.png in Resources */,
+				72E3E77888ED32AA91A4C50D /* icon_play.png in Resources */,
+				A7F0F0C795BDA285FD6F7343 /* light_beam.png in Resources */,
 				824AF9D8AB67861A91F6B9B4 /* mmproj-bf16.gguf in Resources */,
 				F85D88D398B677E48AA11384 /* model-Q4_K_M.gguf in Resources */,
 				BA8E07EB1CCD3216B123B8F2 /* phone.png in Resources */,
+				D0AC16EA3FB450FB4C9588FA /* phone_rec.png in Resources */,
 				FF47FB7DE6E3AF3D6887380E /* sample_neg.jpg in Resources */,
 				484A01B7FDDEA11C83037D8E /* sample_pos.jpg in Resources */,
+				96FA8C7C5CD1A7232B5512D4 /* star_knob.png in Resources */,
+				A79C0CAA6120275C177EC8B9 /* star_peek.png in Resources */,
+				337627828D4C4D4DFAD068B9 /* star_splash.png in Resources */,
+				2ED00D40178DB4E4CBB85750 /* tab_analyze.png in Resources */,
+				F634262A13061BFB96E804EE /* tab_report.png in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		3F88960EB0644D6C8EA4F911 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1C87BCF868601F3FF000F31B /* duck.png in Resources */,
+				75E64E4838C13039D92D51C0 /* glimmer_wordmark.png in Resources */,
+				B39CBCE20A86B0C7E989EB5E /* icon_ai_small.png in Resources */,
+				C29FA99498FC95B977A6516B /* icon_chevron_back.png in Resources */,
+				FDA3DB1B43BACDD4A14C1868 /* icon_menu.png in Resources */,
+				7A43840627DEE10379D4A41B /* icon_play.png in Resources */,
+				F4EB7B2209ED64CDFAACA2EF /* light_beam.png in Resources */,
+				B67A68B827E602D1A3F71F7E /* phone.png in Resources */,
+				5742BAC182CC49572C7F4FEA /* phone_rec.png in Resources */,
+				4FA78C29074F5FCC0BBCF182 /* sample_neg.jpg in Resources */,
+				E11E930FAA063C2AEBB5B6F3 /* sample_pos.jpg in Resources */,
+				DF0C897BB2395454BF8FEC0C /* star_knob.png in Resources */,
+				3FA653710877C76EB3835E9E /* star_peek.png in Resources */,
+				F6DAFC7839E8D6425CEC58DB /* star_splash.png in Resources */,
+				0C6D561AC40B7343337D202F /* tab_analyze.png in Resources */,
+				AFE5FA9B02CB178334458C0C /* tab_report.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -222,6 +359,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				2C97FDC5462D22708F4887BC /* GemmaScreenHostApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FF66DAE4A630AD0A39D43186 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3CC7C6B5AF84B8D5EAACC325 /* GlimmerGalleryApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -291,7 +436,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/GemmaScreen.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = YZ2FQMUZGC;
+				DEVELOPMENT_TEAM = XN9XFCT4XH;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -299,13 +444,57 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "-all_load";
-				PRODUCT_BUNDLE_IDENTIFIER = cn.enactflow.glimmer;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.youyou.gemmascreen;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
+		};
+		1578DF12F81A07EB1B1FC4CE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = XN9XFCT4XH;
+				INFOPLIST_FILE = Gallery/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "-all_load";
+				PRODUCT_BUNDLE_IDENTIFIER = cn.youyou.glimmergallery;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		58CD7DC0286B173215D90605 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = XN9XFCT4XH;
+				INFOPLIST_FILE = Gallery/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				OTHER_LDFLAGS = "-all_load";
+				PRODUCT_BUNDLE_IDENTIFIER = cn.youyou.glimmergallery;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
 		};
 		99AA4EB279C246C54A1914B9 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -314,7 +503,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/GemmaScreen.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = YZ2FQMUZGC;
+				DEVELOPMENT_TEAM = XN9XFCT4XH;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -322,7 +511,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "-all_load";
-				PRODUCT_BUNDLE_IDENTIFIER = cn.enactflow.glimmer;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.youyou.gemmascreen;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -405,6 +594,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		772D1CF239AD5BEB4CF7CF29 /* Build configuration list for PBXNativeTarget "GlimmerGallery" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				58CD7DC0286B173215D90605 /* Debug */,
+				1578DF12F81A07EB1B1FC4CE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		BE4009DA079B277B1C71EAD7 /* Build configuration list for PBXProject "GemmaScreen" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -424,6 +622,10 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		6978095DF4877832B6B17915 /* GlimmerIOS */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = GlimmerIOS;
+		};
 		A6EB668DD5DD39CE5114C3AA /* GlimmerIOS */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = GlimmerIOS;

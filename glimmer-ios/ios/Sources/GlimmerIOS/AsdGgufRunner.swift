@@ -70,4 +70,32 @@ final class AsdGgufRunner {
             }
         }
     }
+
+    /// 流式生成：每解出一个 token piece 就回调 onToken（主线程）；返回完整 output。
+    func generateStream(
+        systemPrompt: String,
+        request: AsdGgufRequest,
+        onToken: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
+        guard modelFiles != nil, let nativeRunner else {
+            throw AsdGgufRunnerError.missingModel
+        }
+        let mediaPaths = request.mediaItems.map(\.url.path)
+        return try await withCheckedThrowingContinuation { continuation in
+            inferenceQueue.async {
+                do {
+                    let output = try nativeRunner.generateStream(
+                        withSystemPrompt: systemPrompt,
+                        userPrompt: request.prompt,
+                        mediaPaths: mediaPaths
+                    ) { piece in
+                        Task { @MainActor in onToken(piece) }
+                    }
+                    continuation.resume(returning: output)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
 }

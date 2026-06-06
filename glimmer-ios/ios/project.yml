@@ -71,6 +71,36 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: App/GemmaScreen.entitlements
         OTHER_LDFLAGS: -all_load
+
+  # 仅模拟器：visual loop 可视化壳。不打包 GGUF 模型、无模型校验脚本，秒级构建。
+  GlimmerGallery:
+    type: application
+    platform: iOS
+    sources:
+      - Gallery
+      - Resources
+    dependencies:
+      - package: GlimmerIOS
+        product: GlimmerIOS
+    info:
+      path: Gallery/Info.plist
+      properties:
+        CFBundleDisplayName: Glimmer Gallery
+        UILaunchScreen: {}
+        NSCameraUsageDescription: 录制行为视频（可视化壳）
+        NSMicrophoneUsageDescription: 录制声音（可视化壳）
+        NSPhotoLibraryUsageDescription: 选择视频（可视化壳）
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cn.youyou.glimmergallery
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: XN9XFCT4XH
+        OTHER_LDFLAGS: -all_load
 schemes:
   GemmaScreen:
     build:
@@ -80,3 +110,9 @@ schemes:
       config: Debug
     archive:
       config: Release
+  GlimmerGallery:
+    build:
+      targets:
+        GlimmerGallery: all
+    run:
+      config: Debug
