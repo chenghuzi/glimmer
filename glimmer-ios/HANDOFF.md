@@ -1,238 +1,159 @@
-# Glimmer 新版 UI 重做 — 接手文档
+# Glimmer iOS 重设计 —— 交接文档（Handoff）
 
-> 本文档记录的是「新版 8 屏全流程重做」这一轮工作的现状。
+> 分支：`feat/glimmer-redesign`　|　仓库：`asdgemma/glimmer-ios`
+> 更新时间：2026-06-06
+> Figma：`https://www.figma.com/design/VP12dmteNhyEKeKmh4Hp3r/ASD?node-id=66-468`（**底部一排**是新版）
 > 计划原文：`~/.claude/plans/purrfect-jingling-kite.md`
-> Figma：`https://www.figma.com/design/VP12dmteNhyEKeKmh4Hp3r/ASD?node-id=66-468`（**底部一排**是新版，顶部一排是旧版）
-> 当前分支：`newcodec`（已 `git reset --hard origin/master`，所有改动都是 uncommitted 的）
 
-## 已完成的视觉屏（按 visual loop 收敛）
+## 0. 一句话现状
 
-| # | 屏 | 文件 | 状态 |
-|---|---|---|---|
-| 1 | 启动页 | `Screens/SplashView.swift` | ✅ 收敛 mean diff 2.83 |
-| 2 | 模型加载 | `Screens/ModelLoadingView.swift` | ✅ 收敛 mean diff 3.86 |
-| 3 | 首页 | `Screens/HomeView.swift` | ✅ 收敛 mean diff 7.04 |
-| 4 | 拍摄相机 | — | ⏭ **不复刻**，用系统原生（详见下） |
-| 5 | 拍摄完成弹窗 | `Screens/CaptureDoneDialog.swift` | ✅ 结构对齐 |
-| 6 | 分析中 | `Screens/AnalyzingView.swift` | ✅ 收敛 mean diff 4.63；流式 SSE 已接 |
-| 7 | 报告结论 | — | ❌ **未做** |
-| 8 | 追问对话 | — | ❌ **未做** |
+新版 8 屏 UI 已全部搭好并接通真后端（chenghuzi 的 9-code 分类 + 本地解释对话）。**自适应布局重构（固定 375×812 绝对定位 → 安全区 + VStack/HStack/Spacer）已完成**：代码改完、`xcodebuild` 编译通过、并在模拟器 iPhone 16 + iPhone 17 Pro Max 两档屏逐屏目测确认铺满无黑边（大屏黑边 bug 已解）。**仅剩真机复跑确认**（见 §1 TODO 4）。另有一个**模型侧阻塞问题**（见 `MODEL_ISSUE.md`）等 chenghuzi 处理。
 
-## 已搭好的基础设施
+---
 
-### Gallery 可视化壳（核心迭代工具）
-- 新增 `GlimmerGallery` target（**仅模拟器**，不打包 GGUF 模型，无校验脚本）
-- 入口：`Gallery/GlimmerGalleryApp.swift` + `Sources/GlimmerIOS/Gallery/GalleryRoot.swift`
-- 用环境变量 `GLIMMER_SCREEN=splash|loading|home|capture_done|analyzing|flow|...` 深链单屏
-- 工作流脚本：
-  - `/tmp/glimmer_build.sh` — 构建 + 装到模拟器
-  - `/tmp/glimmer_shot.sh <screen> <out>` — 启动屏 + 截图 + 缩放到 375×812
-- 模拟器 UDID 写在 `/tmp/glimmer_sim_udid.txt`（iPhone 13 mini，iOS 26.5，逻辑 375×812 与 Figma 一致）
+## 1. 本轮正在做的：自适应布局重构（进行中）
 
-### 设计 tokens
-- `Theme.swift` 里新增 `GTheme`（`splashBg #EDE9DF`、`bg #F2F2EC`、`blueCard #EEF2F5`、`ink #29291F`、`subtle rgba(.6)`、圆角/字号常量等）
-- 老 `ASDTheme` 保留（旧 ContentView/AnalysisView 还在用，没退役）
-- 字体：中文用系统 PingFang SC（默认），标题 Semibold；"Glimmer" 字标是图片资源不是字体
+### 起因
+用户在 iPhone 17 Pro（402×874pt）真机上发现：内容上下留黑边、"没顶到头"（分析页最明显）、左右没铺满、返回按钮位置不对。
 
-### 流程协调器
-- `AppRootView.swift`：`splash → (检查模型) → loading?/home`
-  - **已实现按需 loading**：splash 后检查 `ModelCatalog.items.allSatisfy(isDownloaded || bundled)`，已就绪直接进 home，不显示 loading 屏
-- `MainFlow` 子视图：home → action sheet → VideoPicker → CaptureDoneDialog → AnalysisFlowView
+根因：`Components/FigmaCanvas.swift` 把整个 375×812 设计画布**居中、不缩放**地贴屏，大屏四周留边；所有 `figmaFrame(x:y:w:h:)` 都是相对这个居中画布的绝对坐标。
 
-### 模型下载
-- `ModelCatalog.swift`：模型清单 + 本地落盘（`Application Support/GlimmerModels/`）+ 运行时优先用下载的
-- `ModelDownloadManager.swift`：URLSession.download 真实下载，按文件粒度推进 progress
-- ⚠️ **占位 URL**：`https://models.example.com/glimmer/...`（标了 TODO，替换为真实 CDN 即生效）
-- 占位时走「模拟进度」模式，2.4 秒走完，方便联调 UI
-- `ScreeningService.ensureLoaded()` 已改成 `ModelCatalog.resolvedURL(...)`，优先下载好的，回退随包
+### 方向（用户拍板，重要）
+> 不要做缩放 / 按宽高比硬怼坐标的"奇怪做法"。直接用正常画页面的逻辑摆素材：导航左按钮放左边、logo/文案居中，用真实约束撑开，让元素自然落在安全区里。
 
-### 真实流式（SSE）
-- `ASDGgufNativeRunner.h/.mm` 新增 `generateStreamWithSystemPrompt:userPrompt:mediaPaths:onToken:error:`
-  - 复用同一 token loop，每解一个 token piece 就调用 `onToken(piece)`
-  - 旧的 `generateWithSystemPrompt:...` 现在内部转调 stream 版（onToken=nil），向后兼容
-- `AsdGgufRunner.swift` 新增 `generateStream(systemPrompt:request:onToken:)` async API，回调到 @MainActor
-- `ScreeningService.swift` 新增 `analyzeStream(...)`，按位累加到 `output`
-- `AnalyzingView` 订阅 `partialCode`，每来一位（'0'/'1'）就揭示一个 B 标签（B01-B09），observed='1' 用 medium 字重，未观察用 light
-- Grammar 已保证每个 token = 1 bit，9 个 token 出齐就是完整 9 位 code
-- `AnalyzingDemoContainer` 用 demo code `"101100010"` 每 500ms 揭示一位，gallery 路由 `analyzing` 用它演示效果（已验证视觉 SSE 流式正确）
-
-### 星星素材去方块（重要）
-- Figma 导出的星星都带烘焙好的方形底色（image-fill 节点）
-- 用 PIL flood-fill 从边角扫描扣掉底色：见 `Resources/star_*.png` 都已处理
-- 关键技巧：
-  - 启动大星 thresh=18
-  - 首页探头星 thresh=16
-  - 加载滑块星 thresh=12（小图边缘陡）
-- 重新生成需要原始 Figma 渲染（用 `get_screenshot` 而不是 `get_design_context` 给的 image-fill URL，前者带正确 alpha）
-
-### FigmaCanvas（绝对定位辅助）
-- `Components/FigmaCanvas.swift` — 固定 375×812 坐标空间居中放
-- `.figmaFrame(x:y:w:h:align:)` — 按 Figma 左上角原点放置任意子视图
-- 配合 375 宽的 mini 模拟器即为像素级精确对齐
-
-## 当前的接线问题（这是中断时的状态）
-
-### 1. `confirmationDialog` 样式（已修复并验证）
-- 修复后：
-  ```swift
-  .confirmationDialog("", isPresented: $showSourceDialog, titleVisibility: .hidden) {
-      Button("拍摄") { startPicker(.camera) }
-      Button("从相册选择") { startPicker(.photoLibrary) }
-      Button("取消", role: .cancel) {}
-  }
-  ```
-- iOS 26 渲染：**Liquid Glass 居中浮动卡片**，只显示「拍摄/从相册选择」两个圆角按钮，无标题/副文案。
-- ⚠️ Cancel 按钮 **iOS 26 默认不在卡片里显示**，靠点击卡片外取消（系统行为）。如果产品强要"取消"在卡片里可见，要自建底部 sheet（不用 confirmationDialog）。当前接受 iOS 26 原生默认行为。
-- 测试路径：Gallery 用 `GLIMMER_SCREEN=source_sheet` 启动验证。
-
-### 2. HomeView 视频诊断卡的 hit-test（已验证）
-- 用 `Button { videoCardBody }` 包裹，已通过 `source_sheet` gallery 路由验证：sheet 能正常弹出。
-- ⚠️ `simctl io tap` 不存在（之前用错了）。要测交互只能：(a) 加 `onAppear` 自动触发的 demo gallery 路由 (b) 人手在模拟器里点 (c) Xcode UI Test。
-
-### 3. 分析完之后的报告屏是占位
-- `AnalysisFlowView` 完成分析后跳到 `ReportPlaceholder`
-- `ReportPlaceholder` 套了一层新 NavBar/PlayerBar/Tab，里面塞的是**旧 ReportView**（B01-B10 勾选清单）
-- **要做的**：实现新的 `ReportConversationView`（屏 7+8），替换掉这个占位
-
-## 还没做的事
-
-### A. 屏 7+8 报告结论 + 追问对话（**最大缺口**）
-- Figma：53:751（报告结论）+ 53:994（追问对话）
-- 规格已用 `get_design_context` 拉好（参看 plan 文档）
-- 关键元素：
-  - 大灰卡（#f6f6f5）+ 「报告结论」标题 + 散文 + 底部「本工具仅作早期信号提示」白条
-  - PlayerBar 复用
-  - 底部「可以和我聊聊」输入框（玻璃感半透明，黄色光标，深色发送圆按钮）
-  - 屏 8 是滚到下面：用户气泡 + 助手要点回复
-- 后端：用户定**先用 mock 文案搭视觉壳**（散文报告 + 追问对话先 mock）；真实接入是后续轮次
-- 真模型只出 B01-B09 9 位码，没有散文，没有 chat 能力。Mock 数据可以放在 `MockData.swift`
-
-### B. action sheet 文案调整（看上面 #1）
-
-### C. HomeView 点击触发验证（看上面 #2）
-
-### D. 把新 `ReportConversationView` 接到 `AnalysisFlowView` 替换 `ReportPlaceholder`
-
-### E. （可选）退役旧文件
-- 现在还在仓库里且没用上的：`ContentView.swift`、`AnalysisView.swift`、`ReportView.swift`（被 ReportPlaceholder 临时复用）
-- `GlimmerRootView` 现在指向 `AppRootView()`，旧的 ContentView 实际不会被实例化
-- 等屏 7/8 做完可以删旧的；当前保留有助于回滚
-
-## 关键文件清单
-
-### 新增
+### 统一骨架
+```swift
+ZStack {
+    背景色.ignoresSafeArea()          // 只有背景铺满全屏
+    VStack/HStack { …内容… }          // 内容默认落在安全区内
+        .padding(.horizontal, 16)
+}
 ```
-ios/Gallery/GlimmerGalleryApp.swift               # gallery target 入口
-ios/Sources/GlimmerIOS/AppRootView.swift          # 流程协调器
-ios/Sources/GlimmerIOS/ModelCatalog.swift         # 模型清单 + 本地路径
-ios/Sources/GlimmerIOS/ModelDownloadManager.swift # 下载机
-ios/Sources/GlimmerIOS/Gallery/GalleryRoot.swift  # 深链路由
-ios/Sources/GlimmerIOS/Components/FigmaCanvas.swift
-ios/Sources/GlimmerIOS/Components/GlimmerTabBar.swift
-ios/Sources/GlimmerIOS/Components/GlimmerNavBar.swift
-ios/Sources/GlimmerIOS/Components/PlayerBar.swift
-ios/Sources/GlimmerIOS/Screens/SplashView.swift
-ios/Sources/GlimmerIOS/Screens/ModelLoadingView.swift
-ios/Sources/GlimmerIOS/Screens/HomeView.swift
-ios/Sources/GlimmerIOS/Screens/CaptureDoneDialog.swift
-ios/Sources/GlimmerIOS/Screens/AnalyzingView.swift
-ios/Sources/GlimmerIOS/Screens/AnalysisFlowView.swift   # 包含临时 ReportPlaceholder
-ios/Resources/star_splash.png  star_peek.png  star_knob.png   # 去方块的星星
-ios/Resources/glimmer_wordmark.png  light_beam.png
-ios/Resources/phone_rec.png  icon_menu.png  icon_play.png
-ios/Resources/icon_ai_small.png  icon_chevron_back.png
-ios/Resources/tab_analyze.png  tab_report.png
-```
+- 顶部导航：VStack 首项 `GlimmerNavBar` + `.padding(.top, 8)`（安全区已让出状态栏/灵动岛）
+- 底部 Tab：VStack 末项 `GlimmerTabBar`（安全区已让出 Home Indicator）
+- 卡片/进度条：`.frame(maxWidth: .infinity)` 或 `GeometryReader` 撑开，不再写死宽度
 
-### 修改
-```
-ios/Sources/GlimmerIOS/Theme.swift                 # 加 GTheme + Font.gRounded
-ios/Sources/GlimmerIOS/GlimmerRootView.swift       # 改为渲染 AppRootView
-ios/Sources/GlimmerIOS/ScreeningService.swift      # 加 analyzeStream + 模型路径走 ModelCatalog
-ios/Sources/GlimmerIOS/AsdGgufRunner.swift         # 加 generateStream
-ios/Sources/AsdGgufNative/include/ASDGgufNativeRunner.h
-ios/Sources/AsdGgufNative/ASDGgufNativeRunner.mm   # 加 generateStream，旧 API 转调
-ios/project.yml                                    # 加 GlimmerGallery target + scheme
-```
+### 已改文件（本轮）
+**组件（去掉写死的 375/343 宽）**
+- `Components/GlimmerNavBar.swift`：`.frame(width:375…)` → `maxWidth:.infinity, minHeight:54`
+- `Components/GlimmerTabBar.swift`：→ `maxWidth:.infinity, minHeight:52`
+- `Components/PlayerBar.swift`：`.frame(width:343…)` → `maxWidth:.infinity, minHeight:48`
 
-### 不动
-- `ContentView.swift`、`AnalysisView.swift`、`ReportView.swift`（旧的，待退役）
-- `VideoPicker.swift`（复用了）
-- `VideoAudioPreprocessor.swift`、`MediaDiagnostics.swift`、`ParityTestRunner.swift`、`PreprocessParityRunner.swift`、`AudioExtractor.swift`
-- `core/Sources/GlimmerCore/*`
+**屏幕（从 FigmaCanvas/figmaFrame 重写为正常布局）**
+- `Screens/SplashView.swift`：吉祥物+字标垂直成组居中、光束贴底全宽、tagline 贴底
+- `Screens/ModelLoadingView.swift`：字标居中、进度条用 `GeometryReader`（最大 300 宽，星星滑块随进度 `offset`）、隐私脚注贴底
+- `Screens/HomeView.swift`：标题靠左 + 探头星星右上 `offset` 探出、视频卡 `maxWidth:.infinity` 撑满、Tab 贴底
+- `Screens/AnalyzingView.swift`：`body` 改成 `ZStack+VStack`（Nav→卡片→Player→Tab）；分析卡 `maxHeight:.infinity` 填满；流式列表 `StreamingBehaviorList`、动态省略号 `AnimatedEllipsis`、节奏推进 `.task` **逻辑全部保留未动**
 
-## 怎么继续
+> `Components/FigmaCanvas.swift` 重构后已无人引用（可后续删除，本轮先留着）。
 
-### 构建 & 截图
+### 本轮剩余 TODO 进度（2026-06-06 收敛）
+1. ✅ **编译验证**：`xcodegen generate` + `xcodebuild -scheme GlimmerGallery -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' build` → **BUILD SUCCEEDED**。
+   - 注意 destination 只写 `name=iPhone 16` 会因多 OS 版本歧义而静默列出设备不构建；带上 `OS=18.6`（或用确定存在的机型）。
+   - 编辑器里的 `Cannot find 'GTheme'/'bundleImage' in scope` 全是 **SourceKit 单文件索引误报**，以 `xcodebuild` 为准。
+2. ✅ **逐屏目测**（模拟器，无 SE 可用 → 用 iPhone 16 标准屏 + iPhone 17 Pro Max 大屏夹逼）：splash / loading / home / analyzing(动画) / report 全部铺满、无黑边、nav 贴安全区顶、tab 贴 Home Indicator。大屏上「上下黑边 / 没顶到头 / 返回按钮位置」**已解**。
+3. ✅ **`ReportConversationView.swift` 收尾**：`.padding(.top, 54)` → `.padding(.top, 8)`、滚动内容 `.padding(.top, 120)` → `76`；已在 iPhone 16 + 17 Pro Max 上目测确认 nav 与卡片无重叠、无黑边。
+4. ⬜ **真机复跑**：模拟器跑不了真模型（见下），布局已在模拟器两档屏验证；返回按钮 / 顶到头的真机复核仍待在 iPhone 17 Pro 真机上跑一次确认。
+
+> ⚠️ **Gallery 选屏：`analyzing` ≠ `analyze`**（`GalleryRoot.swift`）
+> - `analyzing`（带 ing）→ `AnalyzingDemoContainer`，**纯 UI mock，不碰模型**，动画跑完自动转到 `ReportConversationView`。**模拟器目测分析中动画 / 报告页用这个。**
+> - `analyze`（无 ing）→ `AnalysisFlowView(test_clip.mov)`，跑**真模型**，在模拟器上加载 mmproj 时 **Metal 崩溃**（`ggml_metal_buffer_set_tensor` → `_xpc_api_misuse`，见 §3/§4），只能真机。
+> - `report` / `qa` 这两个 `GLIMMER_SCREEN` 值目前是 placeholder「未实现」，报告页要经 `analyzing` 流程才能看到。
+
+---
+
+## 2. 项目整体状态
+
+### 流程（8 屏）
+`AppRootView`（`splash → loading → main`）→ `MainFlow`：
+首页 → 系统来源选择器(confirmationDialog：拍摄/相册) → 相机拍完弹 `CaptureDoneDialog`（相册选的直接进分析）→ `AnalysisFlowView` → `AnalyzingView`（流式 9-code 动画）→ `ReportConversationView`（结论 SSE 逐字 + 本地追问对话）。
+
+| # | 屏 | 文件 |
+|---|---|---|
+| 1 | 启动页 | `Screens/SplashView.swift` |
+| 2 | 模型加载 | `Screens/ModelLoadingView.swift` |
+| 3 | 首页 | `Screens/HomeView.swift` |
+| 4 | 拍摄 | 用系统原生（不复刻） |
+| 5 | 拍摄完成弹窗 | `Screens/CaptureDoneDialog.swift` |
+| 6 | 分析中 | `Screens/AnalyzingView.swift` |
+| 7+8 | 报告结论 + 追问对话 | `Screens/ReportConversationView.swift` |
+
+### 后端接线（已完成，真模型）
+- `ScreeningService`：`analyze`（出 9 位 code → `AsdBehaviorReport`）+ `beginExplanationChat`/`sendChatMessage`（chenghuzi 的 KV-cache 多轮解释对话）
+- 报告结论文案 = app 端按 9 位码模板拼接（确定性，不走模型 NL）；底部追问 = 真模型自然语言
+- 模型随包进 `GlimmerGallery`（`project.yml` 已配 device 签名 + bundled gguf），首页之前不再触发下载权限弹窗
+
+### 纯视觉兜底（未提交）
+`mtmd_support_audio` 为 false 时跳过音频、不再硬失败。涉及：
+`AsdGgufNative/ASDGgufNativeRunner.mm` + `.h`、`AsdGgufRunner.swift`（`supportsAudio`）、`ScreeningService.swift`（`audioURL: runner.supportsAudio ? … : nil`）。
+
+---
+
+## 3. ⚠️ 模型侧阻塞（非本端问题）—— 详见 `MODEL_ISSUE.md`
+
+HF `chenghuzi/glimmer-e4b-asd9-gguf` 当前两份 GGUF：
+1. **mmproj 是纯视觉导出**（`mtmd_support_audio`=false），但模型按 `waudio`（带音频）训练 → 原版真机加载即报 `GGUF projector does not support audio input`。
+2. 强制纯视觉后能跑，但**对任意图片恒定输出 `100000001`**（分类塌缩，与画面无关）。
+
+相比"之前能跑通的版本"是回归。已就绪的纯视觉兜底会在 chenghuzi 重新导出带音频塔的 GGUF mmproj 后，由 `supportsAudio` 自动切回音频链路，无需再改代码。litertlm 那份格式与 llama.cpp 不兼容。
+
+---
+
+## 4. 构建 / 跑模拟器
+
 ```bash
-# 修改代码后
-cd /Users/damon/code/asdgemma/glimmer-ios/ios
-xcodegen generate    # 仅当 project.yml 改了或加了资源
-/tmp/glimmer_build.sh                            # build + install
-/tmp/glimmer_shot.sh <screen> /tmp/glimmer_<x>   # 启动 + 截图 + 缩到 375×812
+cd glimmer-ios/ios
+xcodegen generate
+xcodebuild -project GemmaScreen.xcodeproj -scheme GlimmerGallery \
+  -destination 'platform=iOS Simulator,name=iPhone 16,OS=18.6' build   # 不带 OS 会因多版本歧义不构建
+# 选屏：环境变量 GLIMMER_SCREEN = splash|loading|home|analyzing|analyze|report|qa
+# 纯 UI 目测（分析中动画→报告页）：用 analyzing（带 ing），不碰模型
+SIMCTL_CHILD_GLIMMER_SCREEN=analyzing xcrun simctl launch booted cn.youyou.glimmergallery
+xcrun simctl io booted screenshot /tmp/shot.png
 ```
+> 模拟器**跑不了真模型**（Metal 加载 mmproj 崩溃：`mtmd_init_from_file` → `ggml_metal_buffer_set_tensor` → `_xpc_api_misuse` SIGTRAP）。
+> - `analyzing`（带 ing）= 纯 UI mock，模拟器目测专用；`analyze`（无 ing）= 真模型流程，**模拟器必崩**，只能真机（`devicectl`）。
+> - `report` / `qa` 目前是「未实现」placeholder，报告页经 `analyzing` 流程查看。
 
-可用的 `<screen>` 值：`splash`、`loading`、`home`、`capture_done`、`analyzing`、`flow`（含完整流程）
+旧的辅助脚本（如还在）：`/tmp/glimmer_build.sh`、`/tmp/glimmer_shot.sh <screen> <out>`；模拟器 UDID 在 `/tmp/glimmer_sim_udid.txt`。
 
-### visual loop 单屏还原模板
-```bash
-# 1. Figma 参考已在 /tmp/asd_*.png 里（或重新 get_screenshot）
-# 2. 改 SwiftUI 代码
-# 3. /tmp/glimmer_build.sh && /tmp/glimmer_shot.sh <screen> /tmp/glimmer_<x>
-# 4. 用 PIL 做 Phase A (结构) + Phase B (几何/颜色精校)：
-PY=/Users/damon/code/asdgemma/.venv/bin/python
-$PY -c "
-from PIL import Image; import numpy as np
-def load(p): return np.asarray(Image.open(p).convert('RGB').resize((375,812)),dtype=np.int16)
-ref=load('asd_<x>.png'); mine=load('glimmer_<x>.png')
-print('mean|diff|(excl statusbar)=%.2f'%float(np.abs(ref[54:]-mine[54:]).mean()))
-"
+---
+
+## 5. 关键路径速查
+
+| 用途 | 文件 |
+|---|---|
+| 设计 tokens / 颜色 / `bundleImage` | `Sources/GlimmerIOS/Theme.swift`（`GTheme`） |
+| 流程协调器 + 来源选择器 | `Sources/GlimmerIOS/AppRootView.swift` |
+| 分析流程驱动（analyze→动画→报告→startChat） | `Sources/GlimmerIOS/Screens/AnalysisFlowView.swift` |
+| 真后端服务 | `Sources/GlimmerIOS/ScreeningService.swift` |
+| native 桥（mtmd/llama.cpp） | `Sources/AsdGgufNative/ASDGgufNativeRunner.mm` |
+| 9-code 解析/结论模板 | `core/Sources/GlimmerCore/AsdBehaviorParser.swift` |
+| 模型清单 + 下载 | `Sources/GlimmerIOS/ModelCatalog.swift` / `ModelDownloadManager.swift` |
+| Gallery 选屏 harness | `Sources/GlimmerIOS/Gallery/` + `project.yml` 的 `GlimmerGallery` target |
+
+### 星星素材去方块（重生成时用）
+Figma 导出的星星带烘焙的方形底色，用 PIL flood-fill 从边角扣底：启动大星 thresh=18 / 首页探头星 16 / 加载滑块星 12。重新生成需用 `get_screenshot`（带正确 alpha）而非 `get_design_context` 的 image-fill URL。`Resources/star_*.png` 都已处理。
+
+---
+
+## 6. 未提交改动清单（`git status`）
 ```
-
-### 接屏 7/8 的入口
-1. 用 Figma MCP 重新拉 `get_design_context` for 53:751 和 53:994
-2. 下载需要的新素材（输入框背景、send 图标已下到 `Resources/icon_send.png`）
-3. 写 `Screens/ReportConversationView.swift`，参考 `AnalyzingView` 同样的 FigmaCanvas + 绝对定位结构
-4. 在 `Gallery/GalleryRoot.swift` 里把 `case "report"` 和 `case "qa"` 接上
-5. 在 `Screens/AnalysisFlowView.swift` 里把 `ReportPlaceholder` 换成 `ReportConversationView`
-
-### 真模型接入
-- 占位 URL 改成真实 CDN：`ModelCatalog.swift` 里 `Item(...)` 的 `remoteURL`
-- 自动失效 `ModelDownloadManager.usesPlaceholderURLs`，走真实下载路径
-- 真机首启会下载 ~5.9GB 到 Application Support，后续启动 splash 后直接进 home
-
-## 重要约束 & 陷阱
-
-1. **模拟器没有相机**：`startPicker(.camera)` 会自动回退到 `.photoLibrary`，逻辑在 `MainFlow.startPicker`
-2. **`simctl io tap` 不存在**：之前用错了。要在模拟器里测交互只能：(a) 人手鼠标点击 (b) 用 AppleScript 控制模拟器 (c) 在 app 里加调试入口
-3. **GGUF 模型不入库**（5.9GB）：`GlimmerGallery` target 故意不打包模型，秒级构建；`GemmaScreen` 主 target 的 pre/post-build script 会校验模型存在，跑前要 `Scripts/prepare-local-gguf-models.sh`
-4. **状态栏不画**：模拟器自己有真实状态栏，之前用 `simctl status_bar override` 改 9:41 已撤销
-5. **Origin force-pushed**：`newcodec` 已 reset 到 `origin/master`，所有当前改动都是 uncommitted。提交时注意 git status 里有哪些是真要的（不要把 .build/.derivedData 这些带进去）
-6. **PingFang SC 字体**：直接用 `.system(size:)`，iOS 系统中文字体即是 PingFang SC
-7. **图片资源路径**：所有 PNG 都直接放在 `ios/Resources/` 目录（loose PNG，`UIImage(named:)` 直接找）；不用 asset catalog
-8. **流式 token 性质**：grammar `bit ::= "0" | "1"` 保证每个 token 就是 "0" 或 "1"；`onToken(piece)` 每次回调的 `piece` 长度通常是 1
-9. **`ScreeningService.analyze` vs `analyzeStream`**：前者是一次性，后者是 SSE；旧 `AnalysisView` 调的是 `analyze`，新 `AnalysisFlowView` 调的是 `analyzeStream`
-
-## 已确认的设计决策（用户拍板）
-
-- ✅ 范围：8 屏全做（不只是部分）
-- ✅ 后端策略：报告/对话先用 mock 文案搭壳，真实推理接入留后续轮次
-- ✅ 屏 4 拍摄相机：不复刻 53:351，用系统原生（`UIImagePickerController`）
-- ✅ 选择器：原生底部 action sheet（拍摄/选相册/取消）—— 但 iOS 26 上 confirmationDialog 默认有 title+message 时样式不对，要去标题和副文案
-- ✅ 拍摄完成弹窗：保留中间确认（不要选完直接走推理）
-- ✅ Loading 屏按需：splash 后检查模型已就绪则跳过 loading 直接 home
-- ✅ 状态栏不画
-
-## 进度速览
-
+M  AsdGgufNative/ASDGgufNativeRunner.mm        # 纯视觉兜底
+M  AsdGgufNative/include/ASDGgufNativeRunner.h # supportsAudio
+M  GlimmerIOS/AsdGgufRunner.swift              # supportsAudio
+M  GlimmerIOS/ScreeningService.swift           # audioURL 可选
+M  GlimmerIOS/Components/GlimmerNavBar.swift    # ← 本轮自适应
+M  GlimmerIOS/Components/GlimmerTabBar.swift    # ← 本轮自适应
+M  GlimmerIOS/Components/PlayerBar.swift        # ← 本轮自适应
+M  GlimmerIOS/Screens/AnalyzingView.swift       # ← 本轮自适应
+M  GlimmerIOS/Screens/HomeView.swift            # ← 本轮自适应
+M  GlimmerIOS/Screens/ModelLoadingView.swift    # ← 本轮自适应
+M  GlimmerIOS/Screens/SplashView.swift          # ← 本轮自适应
+M  GlimmerIOS/Screens/ReportConversationView.swift # ← 自适应收尾（top 54→8 / 120→76）
+M  ios/project.yml                              # ← 两 target 加 ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+?? ios/Resources/Assets.xcassets/                # ← app icon（Figma 76-294 毛绒星星，2048 源合成 1024）
+?? glimmer-ios/MODEL_ISSUE.md                    # 模型问题报告（给 chenghuzi）
+?? glimmer-ios/HANDOFF.md                        # 本文档
 ```
-✅ 启动页（visual + 模型预检逻辑）
-✅ 模型加载页（visual + 真实下载机 + 占位 URL）
-✅ 首页（visual + Button 入口）
-⏭ 拍摄相机（用系统原生，不复刻）
-✅ 拍摄完成弹窗（visual）
-✅ 分析中（visual + 真实流式 SSE）
-❌ 报告结论（屏 7）
-❌ 追问对话（屏 8）
-🟡 主流程接线（基本通了，但 action sheet 样式 + HomeView Button 触发未验证）
-```
+均**未提交**。提交前先按 §1 的 TODO 编译 + 目测收敛。
