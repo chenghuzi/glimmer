@@ -19,6 +19,7 @@ namespace {
 constexpr uint32_t kContextSize = 8192;
 constexpr int32_t kBatchSize = 2048;
 constexpr int32_t kMaxOutputTokens = 16;
+constexpr int32_t kDefaultChatMaxOutputTokens = 512;
 constexpr char kMediaMarker[] = "<__media__>";
 constexpr char kCode9Grammar[] =
     "root ::= bit bit bit bit bit bit bit bit bit\n"
@@ -38,6 +39,7 @@ enum class NativeError : NSInteger {
     grammar = 11,
     decode = 12,
     detokenize = 13,
+    noExplanationSession = 14,
 };
 
 NSError * MakeError(NativeError code, NSString * message) {
@@ -109,6 +111,52 @@ std::string FormatGemma4Prompt(const std::string & systemPrompt, const std::stri
     return prompt;
 }
 
+std::string FormatGemma4PrefilledPrompt(
+    const std::string & systemPrompt,
+    const std::string & userPrompt,
+    const std::string & assistantContext
+) {
+    std::string prompt;
+    const std::string system = Trim(systemPrompt);
+    if (!system.empty()) {
+        prompt += "<|turn>system\n";
+        prompt += system;
+        prompt += "<turn|>\n";
+    }
+
+    prompt += "<|turn>user\n";
+    prompt += Trim(userPrompt);
+    prompt += "<turn|>\n";
+    prompt += "<|turn>model\n";
+    prompt += Trim(assistantContext);
+    prompt += "<turn|>\n";
+    return prompt;
+}
+
+std::string FormatGemma4UserTurn(const std::string & userMessage, bool closePreviousAssistant) {
+    std::string prompt;
+    if (closePreviousAssistant) {
+        prompt += "<turn|>\n";
+    }
+    prompt += "<|turn>user\n";
+    prompt += Trim(userMessage);
+    prompt += "<turn|>\n";
+    prompt += "<|turn>model\n";
+    return prompt;
+}
+
+size_t FirstTurnBoundaryOffset(const std::string & text) {
+    const size_t endTurn = text.find("<turn|>");
+    const size_t startTurn = text.find("<|turn>");
+    if (endTurn == std::string::npos) {
+        return startTurn;
+    }
+    if (startTurn == std::string::npos) {
+        return endTurn;
+    }
+    return std::min(endTurn, startTurn);
+}
+
 int ThreadCount() {
     const unsigned int detected = std::thread::hardware_concurrency();
     if (detected == 0) {
@@ -167,6 +215,9 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     mtmd_context * mtmd_;
     llama_batch generationBatch_;
     bool hasGenerationBatch_;
+    llama_pos explanationNPast_;
+    bool hasExplanationSession_;
+    bool explanationAssistantNeedsClose_;
 }
 
 - (nullable instancetype)initWithModelPath:(NSString *)modelPath
@@ -185,6 +236,9 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     context_ = nullptr;
     mtmd_ = nullptr;
     hasGenerationBatch_ = false;
+    explanationNPast_ = 0;
+    hasExplanationSession_ = false;
+    explanationAssistantNeedsClose_ = false;
 
     EnsureBackend();
 
@@ -269,24 +323,15 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     [self cleanupRuntime];
 }
 
-- (nullable NSString *)generateWithSystemPrompt:(NSString *)systemPrompt
-                                     userPrompt:(NSString *)userPrompt
-                                     mediaPaths:(NSArray<NSString *> *)mediaPaths
-                                          error:(NSError **)error {
-    if (error != nullptr) {
-        *error = nil;
-    }
-
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    const std::string formattedPrompt = FormatGemma4Prompt(ToString(systemPrompt), ToString(userPrompt));
+- (BOOL)evaluateFormattedPrompt:(const std::string &)formattedPrompt
+                      mediaPaths:(NSArray<NSString *> *)mediaPaths
+                           nPast:(llama_pos *)nPast
+                           error:(NSError **)error {
     const size_t markerCount = CountOccurrences(formattedPrompt, kMediaMarker);
     if (markerCount != mediaPaths.count) {
         AssignError(error, NativeError::markerMismatch, @"Media marker count does not match media file count.");
-        return nil;
+        return NO;
     }
-
-    llama_memory_clear(llama_get_memory(context_), true);
 
     std::vector<mtmd_bitmap *> bitmaps;
     bitmaps.reserve(mediaPaths.count);
@@ -297,7 +342,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
                 mtmd_bitmap_free(item);
             }
             AssignError(error, NativeError::mediaLoad, @"Failed to load media file for GGUF inference.");
-            return nil;
+            return NO;
         }
         bitmaps.push_back(bitmap);
     }
@@ -309,7 +354,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
             mtmd_bitmap_free(item);
         }
         AssignError(error, NativeError::tokenize, @"Failed to allocate multimodal input chunks.");
-        return nil;
+        return NO;
     }
 
     mtmd_input_text text;
@@ -317,26 +362,26 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     text.add_special = true;
     text.parse_special = true;
 
-    const int32_t tokenizeResult = mtmd_tokenize(mtmd_, chunks, &text, bitmapPtrs.data(), bitmapPtrs.size());
+    const mtmd_bitmap ** bitmapData = bitmapPtrs.empty() ? nullptr : bitmapPtrs.data();
+    const int32_t tokenizeResult = mtmd_tokenize(mtmd_, chunks, &text, bitmapData, bitmapPtrs.size());
     if (tokenizeResult != 0) {
         mtmd_input_chunks_free(chunks);
         for (mtmd_bitmap * item : bitmaps) {
             mtmd_bitmap_free(item);
         }
         AssignError(error, NativeError::tokenize, @"Failed to tokenize multimodal prompt.");
-        return nil;
+        return NO;
     }
 
-    llama_pos nPast = 0;
     const int32_t evalResult = mtmd_helper_eval_chunks(
         mtmd_,
         context_,
         chunks,
-        nPast,
+        *nPast,
         0,
         kBatchSize,
         true,
-        &nPast
+        nPast
     );
 
     mtmd_input_chunks_free(chunks);
@@ -346,54 +391,191 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
 
     if (evalResult != 0) {
         AssignError(error, NativeError::eval, @"Failed to evaluate multimodal prompt.");
-        return nil;
+        return NO;
+    }
+    return YES;
+}
+
+- (nullable NSString *)decodeWithMaxOutputTokens:(int32_t)maxOutputTokens
+                                           nPast:(llama_pos *)nPast
+                                    codeGrammar:(BOOL)codeGrammar
+                             stopAtTurnBoundary:(BOOL)stopAtTurnBoundary
+                           consumedTurnBoundary:(BOOL *)consumedTurnBoundary
+                                           error:(NSError **)error {
+    if (consumedTurnBoundary != nullptr) {
+        *consumedTurnBoundary = NO;
     }
 
     const llama_vocab * vocab = llama_model_get_vocab(model_);
     llama_sampler * sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler * grammar = llama_sampler_init_grammar(vocab, kCode9Grammar, "root");
-    if (sampler == nullptr || grammar == nullptr) {
-        if (sampler != nullptr) {
-            llama_sampler_free(sampler);
-        }
-        if (grammar != nullptr) {
-            llama_sampler_free(grammar);
-        }
-        AssignError(error, NativeError::grammar, @"Failed to initialize grammar sampler.");
+    if (sampler == nullptr) {
+        AssignError(error, NativeError::decode, @"Failed to initialize sampler.");
         return nil;
     }
 
-    llama_sampler_chain_add(sampler, grammar);
+    if (codeGrammar) {
+        llama_sampler * grammar = llama_sampler_init_grammar(vocab, kCode9Grammar, "root");
+        if (grammar == nullptr) {
+            llama_sampler_free(sampler);
+            AssignError(error, NativeError::grammar, @"Failed to initialize grammar sampler.");
+            return nil;
+        }
+        llama_sampler_chain_add(sampler, grammar);
+    }
+
     llama_sampler_chain_add(sampler, llama_sampler_init_top_k(1));
     llama_sampler_chain_add(sampler, llama_sampler_init_top_p(1.0f, 1));
     llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.0f));
     llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 
     std::string output;
-    for (int32_t index = 0; index < kMaxOutputTokens; index += 1) {
+    const int32_t tokenLimit = std::max<int32_t>(1, maxOutputTokens);
+    for (int32_t index = 0; index < tokenLimit; index += 1) {
         const llama_token token = llama_sampler_sample(sampler, context_, -1);
         if (llama_vocab_is_eog(vocab, token)) {
             break;
         }
 
-        output += TokenToPiece(vocab, token, false, error);
+        const bool includeSpecial = stopAtTurnBoundary;
+        const std::string piece = TokenToPiece(vocab, token, includeSpecial, error);
         if (error != nullptr && *error != nil) {
             llama_sampler_free(sampler);
             return nil;
         }
 
+        const size_t boundaryOffset = stopAtTurnBoundary ? FirstTurnBoundaryOffset(piece) : std::string::npos;
+        if (boundaryOffset == std::string::npos) {
+            output += piece;
+        } else {
+            output += piece.substr(0, boundaryOffset);
+        }
+
         BatchClear(generationBatch_);
-        BatchAdd(generationBatch_, token, nPast, 0, true);
-        nPast += 1;
+        BatchAdd(generationBatch_, token, *nPast, 0, true);
+        *nPast += 1;
         if (llama_decode(context_, generationBatch_) != 0) {
             llama_sampler_free(sampler);
             AssignError(error, NativeError::decode, @"Failed to decode generated token.");
             return nil;
         }
+
+        if (boundaryOffset != std::string::npos) {
+            if (consumedTurnBoundary != nullptr) {
+                *consumedTurnBoundary = YES;
+            }
+            break;
+        }
     }
 
     llama_sampler_free(sampler);
-    return ToNSString(output);
+    return ToNSString(Trim(output));
+}
+
+- (nullable NSString *)generateWithSystemPrompt:(NSString *)systemPrompt
+                                     userPrompt:(NSString *)userPrompt
+                                     mediaPaths:(NSArray<NSString *> *)mediaPaths
+                                          error:(NSError **)error {
+    if (error != nullptr) {
+        *error = nil;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    hasExplanationSession_ = false;
+    explanationAssistantNeedsClose_ = false;
+    explanationNPast_ = 0;
+
+    const std::string formattedPrompt = FormatGemma4Prompt(ToString(systemPrompt), ToString(userPrompt));
+    llama_memory_clear(llama_get_memory(context_), true);
+
+    llama_pos nPast = 0;
+    if (![self evaluateFormattedPrompt:formattedPrompt mediaPaths:mediaPaths nPast:&nPast error:error]) {
+        return nil;
+    }
+
+    return [self decodeWithMaxOutputTokens:kMaxOutputTokens
+                                      nPast:&nPast
+                               codeGrammar:YES
+                        stopAtTurnBoundary:NO
+                      consumedTurnBoundary:nullptr
+                                      error:error];
+}
+
+- (BOOL)beginExplanationSessionWithSystemPrompt:(NSString *)systemPrompt
+                                     userPrompt:(NSString *)userPrompt
+                               assistantContext:(NSString *)assistantContext
+                                     mediaPaths:(NSArray<NSString *> *)mediaPaths
+                                          error:(NSError **)error {
+    if (error != nullptr) {
+        *error = nil;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const std::string formattedPrompt = FormatGemma4PrefilledPrompt(
+        ToString(systemPrompt),
+        ToString(userPrompt),
+        ToString(assistantContext)
+    );
+    llama_memory_clear(llama_get_memory(context_), true);
+
+    llama_pos nPast = 0;
+    if (![self evaluateFormattedPrompt:formattedPrompt mediaPaths:mediaPaths nPast:&nPast error:error]) {
+        hasExplanationSession_ = false;
+        explanationAssistantNeedsClose_ = false;
+        explanationNPast_ = 0;
+        return NO;
+    }
+
+    hasExplanationSession_ = true;
+    explanationAssistantNeedsClose_ = false;
+    explanationNPast_ = nPast;
+    return YES;
+}
+
+- (nullable NSString *)sendExplanationUserMessage:(NSString *)message
+                                  maxOutputTokens:(NSInteger)maxOutputTokens
+                                            error:(NSError **)error {
+    if (error != nullptr) {
+        *error = nil;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!hasExplanationSession_) {
+        AssignError(error, NativeError::noExplanationSession, @"Explanation session is not initialized.");
+        return nil;
+    }
+
+    const std::string userTurn = FormatGemma4UserTurn(ToString(message), explanationAssistantNeedsClose_);
+    if (![self evaluateFormattedPrompt:userTurn mediaPaths:@[] nPast:&explanationNPast_ error:error]) {
+        return nil;
+    }
+    explanationAssistantNeedsClose_ = false;
+
+    BOOL consumedTurnBoundary = NO;
+    const int32_t tokenLimit = maxOutputTokens > 0
+        ? static_cast<int32_t>(std::min<NSInteger>(maxOutputTokens, 2048))
+        : kDefaultChatMaxOutputTokens;
+    NSString * output = [self decodeWithMaxOutputTokens:tokenLimit
+                                                  nPast:&explanationNPast_
+                                           codeGrammar:NO
+                                    stopAtTurnBoundary:YES
+                                  consumedTurnBoundary:&consumedTurnBoundary
+                                                  error:error];
+    if (output == nil) {
+        return nil;
+    }
+
+    explanationAssistantNeedsClose_ = !consumedTurnBoundary;
+    return output;
+}
+
+- (void)invalidateExplanationSession {
+    std::lock_guard<std::mutex> lock(mutex_);
+    hasExplanationSession_ = false;
+    explanationAssistantNeedsClose_ = false;
+    explanationNPast_ = 0;
 }
 
 @end

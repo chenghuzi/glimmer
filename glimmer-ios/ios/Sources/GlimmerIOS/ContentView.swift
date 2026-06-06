@@ -27,7 +27,7 @@ struct ContentView: View {
                         .frame(width: 200)
                         .offset(x: 16, y: -8)
 
-                    Text("选择你想开始的\n诊断方式")
+                    Text("选择你想开始的\n筛查方式")
                         .font(.system(size: 24, weight: .semibold))
                         .foregroundStyle(ASDTheme.ink)
                         .lineSpacing(2)
@@ -36,7 +36,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 26)
 
-                // 视频诊断卡片（唯一入口）
+                // 视频筛查卡片（唯一入口）
                 videoCard
                     .padding(.horizontal, 16)
                     .padding(.top, 24)
@@ -52,7 +52,7 @@ struct ContentView: View {
                 tabBar
             }
         }
-        .confirmationDialog("视频诊断", isPresented: $showSourceDialog, titleVisibility: .visible) {
+        .confirmationDialog("视频筛查", isPresented: $showSourceDialog, titleVisibility: .visible) {
             Button("录制视频") { startPicker(.camera) }
             Button("选择视频文件") { startPicker(.photoLibrary) }
             Button("取消", role: .cancel) {}
@@ -104,7 +104,7 @@ struct ContentView: View {
                     .allowsHitTesting(false)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("视频诊断分析")
+                    Text("视频筛查分析")
                         .font(.system(size: 20, weight: .medium))
                         .foregroundStyle(ASDTheme.ink)
                     Spacer()
