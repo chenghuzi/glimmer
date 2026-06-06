@@ -71,30 +71,57 @@ final class AsdGgufRunner {
         }
     }
 
-    /// 流式生成：每解出一个 token piece 就回调 onToken（主线程）；返回完整 output。
-    func generateStream(
+    func beginExplanationSession(
         systemPrompt: String,
         request: AsdGgufRequest,
-        onToken: @escaping @MainActor (String) -> Void
-    ) async throws -> String {
+        assistantContext: String
+    ) async throws {
         guard modelFiles != nil, let nativeRunner else {
             throw AsdGgufRunnerError.missingModel
         }
         let mediaPaths = request.mediaItems.map(\.url.path)
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            inferenceQueue.async {
+                do {
+                    try nativeRunner.beginExplanationSession(
+                        withSystemPrompt: systemPrompt,
+                        userPrompt: request.prompt,
+                        assistantContext: assistantContext,
+                        mediaPaths: mediaPaths
+                    )
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    func sendExplanationMessage(_ message: String, maxOutputTokens: Int = 512) async throws -> String {
+        guard modelFiles != nil, let nativeRunner else {
+            throw AsdGgufRunnerError.missingModel
+        }
         return try await withCheckedThrowingContinuation { continuation in
             inferenceQueue.async {
                 do {
-                    let output = try nativeRunner.generateStream(
-                        withSystemPrompt: systemPrompt,
-                        userPrompt: request.prompt,
-                        mediaPaths: mediaPaths
-                    ) { piece in
-                        Task { @MainActor in onToken(piece) }
-                    }
+                    let output = try nativeRunner.sendExplanationUserMessage(
+                        message,
+                        maxOutputTokens: maxOutputTokens
+                    )
                     continuation.resume(returning: output)
                 } catch {
                     continuation.resume(throwing: error)
                 }
+            }
+        }
+    }
+
+    func invalidateExplanationSession() async {
+        guard let nativeRunner else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            inferenceQueue.async {
+                nativeRunner.invalidateExplanationSession()
+                continuation.resume()
             }
         }
     }
