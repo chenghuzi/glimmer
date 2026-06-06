@@ -55,6 +55,7 @@
 
 /* Begin PBXFileReference section */
 		064EEA933D0BD0289350339A /* star_splash.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = star_splash.png; sourceTree = "<group>"; };
+		0B1062212838149CCA136D41 /* GlimmerGallery.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GlimmerGallery.entitlements; sourceTree = "<group>"; };
 		0FD27B70134137C85DC9BB3A /* GemmaScreen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GemmaScreen.entitlements; sourceTree = "<group>"; };
 		150E0CEEB930B1786D250C61 /* GemmaScreenHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GemmaScreenHostApp.swift; sourceTree = "<group>"; };
 		1C2FCEE47B6BCEFBCB9D822D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -124,6 +125,7 @@
 		3013381F735E8754161F0C2D /* Gallery */ = {
 			isa = PBXGroup;
 			children = (
+				0B1062212838149CCA136D41 /* GlimmerGallery.entitlements */,
 				E543F4878CF2171E0F6227A6 /* GlimmerGalleryApp.swift */,
 				E95A8B8C2192DD7A12D5C05B /* Info.plist */,
 			);
@@ -472,6 +474,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Gallery/GlimmerGallery.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = XN9XFCT4XH;
@@ -494,6 +497,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Gallery/GlimmerGallery.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = XN9XFCT4XH;

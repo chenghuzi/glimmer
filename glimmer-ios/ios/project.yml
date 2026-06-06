@@ -107,6 +107,8 @@ targets:
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: XN9XFCT4XH
+        # 大模型推理需要更高内存上限，否则在预留计算缓冲时 posix_memalign 失败 → OOM 崩溃
+        CODE_SIGN_ENTITLEMENTS: Gallery/GlimmerGallery.entitlements
         OTHER_LDFLAGS: -all_load
 schemes:
   GemmaScreen:
