@@ -273,6 +273,18 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
                                      userPrompt:(NSString *)userPrompt
                                      mediaPaths:(NSArray<NSString *> *)mediaPaths
                                           error:(NSError **)error {
+    return [self generateStreamWithSystemPrompt:systemPrompt
+                                     userPrompt:userPrompt
+                                     mediaPaths:mediaPaths
+                                        onToken:nil
+                                          error:error];
+}
+
+- (nullable NSString *)generateStreamWithSystemPrompt:(NSString *)systemPrompt
+                                           userPrompt:(NSString *)userPrompt
+                                           mediaPaths:(NSArray<NSString *> *)mediaPaths
+                                              onToken:(void (^)(NSString *))onToken
+                                                error:(NSError **)error {
     if (error != nullptr) {
         *error = nil;
     }
@@ -376,10 +388,14 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
             break;
         }
 
-        output += TokenToPiece(vocab, token, false, error);
+        const std::string piece = TokenToPiece(vocab, token, false, error);
         if (error != nullptr && *error != nil) {
             llama_sampler_free(sampler);
             return nil;
+        }
+        output += piece;
+        if (onToken != nil && !piece.empty()) {
+            onToken(ToNSString(piece));
         }
 
         BatchClear(generationBatch_);

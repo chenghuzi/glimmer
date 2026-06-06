@@ -26,3 +26,38 @@ func bundleImage(_ name: String) -> Image {
     if let ui = UIImage(named: name) { return Image(uiImage: ui) }
     return Image(systemName: "photo")
 }
+
+// MARK: - 新版设计 tokens（来自 Figma VP12dmteNhyEKeKmh4Hp3r 新版画板，get_design_context 精确值）
+
+enum GTheme {
+    // 背景
+    static let splashBg = Color(hex: 0xEDE9DF)   // 启动/加载：暖奶油底 rgb(237,233,223)
+    static let bg = Color(hex: 0xF6F4EF)         // 首页/报告：浅奶油底（逐屏精校）
+    static let blueCard = Color(hex: 0xE7EEF3)   // 首页视频诊断卡：浅蓝
+    static let card = Color(hex: 0xF2F1EC)        // 通用浅卡片
+    static let white = Color(hex: 0xFFFFFF)
+
+    // 文字 / 墨色（深橄榄，非纯黑）rgb(41,41,31)
+    static let ink = Color(hex: 0x29291F)
+    static let inkSecondary = Color(hex: 0x29291F, alpha: 0.85)
+    static let subtle = Color(hex: 0x29291F, alpha: 0.6)
+    static let faint = Color(hex: 0x29291F, alpha: 0.4)
+
+    // 强调
+    static let onInk = Color(hex: 0xFFFFFF)
+    static let homeIndicator = Color(hex: 0x29291F)
+
+    // 圆角
+    static let cardRadius: CGFloat = 24
+    static let dialogRadius: CGFloat = 20
+}
+
+extension Font {
+    /// 粗圆体标题（系统 rounded design）
+    static func gRounded(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
+    }
+}
+
+/// 直接拿 UIImage（用于需要 intrinsic 尺寸/背景填充的场景）
+func bundleUIImage(_ name: String) -> UIImage? { UIImage(named: name) }
