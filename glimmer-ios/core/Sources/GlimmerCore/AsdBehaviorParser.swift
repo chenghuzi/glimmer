@@ -24,15 +24,15 @@ public struct AsdBehaviorReport: Equatable, Sendable {
     }
 
     public var conclusionTitle: String {
-        detectedLabels.isEmpty ? "未观察到明显目标行为特征" : "观察到 \(detectedLabels.count) 项可关注的行为特征"
+        detectedLabels.isEmpty ? "未注意到明显自闭症倾向类型行为" : "注意到 \(detectedLabels.count) 类可关注行为"
     }
 
     public var conclusionText: String {
         let names = detectedLabels.map(\.name)
         guard !names.isEmpty else {
-            return "本次片段未观察到 B01 到 B09 的明显目标行为特征。B10 由应用端根据前 9 项全为 false 自动派生。"
+            return "本次片段中，未注意到自闭症倾向类型行为。"
         }
-        return "本次片段中观察到的可关注行为特征包括：\(names.joined(separator: "、"))。这些结果只表示片段中的可观察行为线索，不构成诊断。"
+        return "本次片段中，注意到一些需要关注的行为表现，例如：\(names.joined(separator: "、"))。这些内容仅描述片段中的可见线索，供后续观察参考。"
     }
 
     public var jsonString: String {

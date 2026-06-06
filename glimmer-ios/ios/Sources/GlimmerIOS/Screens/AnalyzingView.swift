@@ -2,10 +2,8 @@ import SwiftUI
 
 /// 屏6 分析中 — Figma 53:445
 ///
-/// 模型按 GBNF grammar 严格吐 9 位 binary code（每个 token = 1 bit）。
-/// 这里订阅 service.output（流式累加的 partial code），每出一位就把对应
-/// B 标签（B01…B09）滚出到列表里：'1' = 观察到，'0' = 未观察到。
-/// 9 位收齐后由 app 端计算 B10（B01-B09 全 0 时为 1）并补到第 10 行。
+/// The model emits a strict 9-bit internal code. The UI reveals the mapped
+/// behavior names at a fixed pace, then appends the derived background row.
 struct AnalyzingView: View {
     var timestamp: String = "2026-06-03 12:12:12"
     var partialCode: String = ""
@@ -23,8 +21,8 @@ struct AnalyzingView: View {
     @State private var targetCount: Int = 0
     private let revealInterval: Duration = .milliseconds(900)
 
-    /// 把流式 9 位 code 扩展成 10 位（追加 app 端算出的 B10）。
-    /// 不足 9 位时直接返回原 code，避免提前揭示 B10。
+    /// Expands the model output with the app-derived background bit.
+    /// Until the model code is complete, keep the partial code unchanged.
     private var displayCode: String {
         guard partialCode.count >= 9 else { return partialCode }
         let nine = String(partialCode.prefix(9))
@@ -110,8 +108,7 @@ struct AnalyzingView: View {
         .background(Color(hex: 0xF6F6F5), in: RoundedRectangle(cornerRadius: 24))
     }
 
-    /// B01–B10 中文名（与 [behaviorFeatures](ReportView.swift:11) 保持一致）。
-    /// 模型负责 B01–B09；B10 由 app 端补：当 B01-B09 都未观察到时 B10=true。
+    /// User-facing behavior names in internal bit order.
     static let featureNames: [String] = [
         "缺乏或回避眼神接触",
         "攻击行为",
@@ -215,8 +212,8 @@ struct AnalyzingDemoContainer: View {
         let names = zip(AnalyzingView.featureNames, demoCode)
             .filter { $0.1 == "1" }
             .map(\.0)
-        guard !names.isEmpty else { return "本次片段未观察到明显目标行为特征。" }
-        return "本次片段中观察到的可关注行为特征包括：\(names.joined(separator: "、"))。这些结果只表示片段中的可观察行为线索，不构成诊断。"
+        guard !names.isEmpty else { return "本次片段中，未注意到自闭症倾向类型行为。" }
+        return "本次片段中，注意到一些需要关注的行为表现，例如：\(names.joined(separator: "、"))。这些内容仅描述片段中的可见线索，供后续观察参考。"
     }
 
     var body: some View {

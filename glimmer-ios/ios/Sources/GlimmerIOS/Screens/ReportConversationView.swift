@@ -16,6 +16,7 @@ struct ReportConversationView: View {
     var isResponding: Bool = false
     var onSend: (String) -> Void = { _ in }
     var onBack: () -> Void = {}
+    var onSelectTab: (GlimmerTab) -> Void = { _ in }
 
     // 结论 SSE 节流：30ms/字符
     @State private var revealedCount: Int = 0
@@ -92,7 +93,7 @@ struct ReportConversationView: View {
                     Text("分析与对话全程在设备本地完成")
                         .font(.system(size: 12, weight: .light))
                         .foregroundStyle(Color(hex: 0x666664))
-                    GlimmerTabBar(active: .report)
+                    GlimmerTabBar(active: .report, onSelect: onSelectTab)
                 }
             }
         }
@@ -149,21 +150,18 @@ struct ReportConversationView: View {
 
             HStack {
                 Spacer()
-                Text("本工具仅作早期信号提示，不构成诊断")
+                Text("本结果仅作早期信号提示，请结合日常观察判断")
                     .font(.system(size: 12, weight: .light))
                     .foregroundStyle(Color(hex: 0x666664))
                     .tracking(0.12)
                 Spacer()
             }
             .frame(height: 32)
-            .background(Color(hex: 0xF2F2F2))
-            .overlay(alignment: .top) {
-                Rectangle().fill(Color(hex: 0xECECEC)).frame(height: 0.5)
-            }
+            .background(Color(hex: 0xF2F1EC, alpha: 0.74))
         }
-        .background(Color(hex: 0xF6F6F5))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(Color.white, lineWidth: 1))
+        .background(GTheme.white.opacity(0.66))
         .clipShape(RoundedRectangle(cornerRadius: 24))
+        .shadow(color: .black.opacity(0.035), radius: 8, x: 0, y: 3)
     }
 
     // MARK: - 气泡
@@ -256,7 +254,7 @@ private struct AnimatedThinkingDots: View {
 #Preview {
     ReportConversationView(
         videoDuration: "00:23",
-        conclusion: "本次片段中观察到的可关注行为特征包括：物体排列、上肢刻板动作。这些结果只表示片段中的可观察行为线索，不构成诊断。",
+        conclusion: "本次片段中，注意到一些需要关注的行为表现，例如：物体排列、上肢刻板动作。这些内容仅描述片段中的可见线索，供后续观察参考。",
         messages: [
             ExplanationChatMessage(role: .user, text: "所以小朋友现在这种行为是有一定倾向性的么？"),
             ExplanationChatMessage(role: .assistant, text: "视频里孩子反复把罐头叠高、排列，这类重复摆弄物品的动作是筛查里关注的线索之一。不过单段视频不一定很明显，建议结合更多日常场景观察。")

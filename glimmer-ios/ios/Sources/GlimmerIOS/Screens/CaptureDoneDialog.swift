@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 屏5 拍摄完成弹窗 — Figma 53:332 「拍摄完成」
-/// 半透明遮罩 + 居中白卡 + 主按钮「视频诊断」/ 文字按钮「取消」
+/// 半透明遮罩 + 居中白卡 + 主按钮「视频分析」/ 文字按钮「取消」
 struct CaptureDoneDialog: View {
     var onConfirm: () -> Void = {}
     var onCancel: () -> Void = {}
@@ -18,7 +18,7 @@ struct CaptureDoneDialog: View {
                     Text("拍摄完成")
                         .font(.system(size: 17, weight: .medium))
                         .foregroundStyle(GTheme.ink)
-                    Text("确认视频拍摄完成，开始进行分析诊断")
+                    Text("确认视频拍摄完成，开始进行分析")
                         .font(.system(size: 15))
                         .foregroundStyle(GTheme.subtle)
                         .multilineTextAlignment(.center)
@@ -27,7 +27,7 @@ struct CaptureDoneDialog: View {
 
                 VStack(spacing: 12) {
                     Button(action: onConfirm) {
-                        Text("视频诊断")
+                        Text("开始分析")
                             .font(.system(size: 15, weight: .medium))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
