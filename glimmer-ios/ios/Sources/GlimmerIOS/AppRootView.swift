@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// 应用流程协调器：启动页 → 加载/下载模型 → 主界面（含选视频→分析→报告完整链路）。
+/// App flow coordinator: splash → model download gate → main flow.
 public struct AppRootView: View {
     public init() {}
 
@@ -16,8 +16,7 @@ public struct AppRootView: View {
                 SplashView()
                     .transition(.opacity)
             case .loading:
-                ModelLoadingView(progress: downloader.progress,
-                                 statusText: downloader.statusText)
+                ModelLoadingView(progress: downloader.progress)
                     .transition(.opacity)
             case .main:
                 MainFlow()
@@ -27,22 +26,16 @@ public struct AppRootView: View {
         .animation(.easeInOut(duration: 0.4), value: phase)
         .task {
             try? await Task.sleep(for: .seconds(1.6))
-            // 已下载好 / 已随包：跳过 loading 直接进 main
-            if modelsReady() {
+            if downloader.hasTrustedModels {
                 phase = .main
                 return
             }
+
             phase = .loading
             await downloader.start()
-            if downloader.isReady { phase = .main }
-        }
-    }
-
-    /// 所有模型都本地可用（下载好或随包）
-    private func modelsReady() -> Bool {
-        ModelCatalog.items.allSatisfy { item in
-            ModelCatalog.isDownloaded(item)
-                || Bundle.main.url(forResource: item.resource, withExtension: "gguf") != nil
+            if downloader.isReady {
+                phase = .main
+            }
         }
     }
 }

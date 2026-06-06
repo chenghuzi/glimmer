@@ -13,8 +13,6 @@ final class ScreeningService {
     var isChatResponding: Bool = false
     var chatError: String?
 
-    private let modelResource = "model-Q4_K_M"
-    private let mmprojResource = "mmproj-bf16"
     private let runner = AsdGgufRunner()
     private var loaded = false
 
@@ -22,15 +20,7 @@ final class ScreeningService {
         if loaded { return }
         statusText = "加载模型中…"
 
-        // 优先用下载好的模型，找不到再回退 app bundle（兼容随包方式）
-        guard let modelURL = ModelCatalog.resolvedURL(resource: modelResource) else {
-            throw AsdGgufRunnerError.missingModel
-        }
-        guard let mmprojURL = ModelCatalog.resolvedURL(resource: mmprojResource) else {
-            throw AsdGgufRunnerError.missingMmproj
-        }
-
-        try await runner.load(modelFiles: AsdGgufModelFiles(modelURL: modelURL, mmprojURL: mmprojURL))
+        try await runner.load(modelFiles: ModelCatalog.resolvedModelFiles())
         loaded = true
         statusText = "已就绪（本地 · 看 + 听）"
     }
