@@ -4,82 +4,84 @@
 
 > ⚠️ 本工具仅作**早期信号提示**，不构成诊断。结论需由专业人员评估。
 
-## 当前架构（端侧运行时：Google LiteRT-LM）
+## 当前架构（端侧运行时：llama.cpp GGUF + mtmd）
 
 | 项 | 说明 |
 |---|---|
-| 运行时 | **LiteRT-LM**（Swift，vendored 为 `ios/Vendor/CLiteRTLM.xcframework`） |
-| 模型 | `asd-gemma4-code9.litertlm`（微调 + QLoRA/LoftQ W4 量化，纯视觉版，**约 7.8GB，不入库**） |
-| 输入 | 视频抽帧（多张图）→ 中文文字指令；本模型包**无 audio encoder**，音频通道关闭 |
+| 运行时 | **llama.cpp b9536 / GGUF / Metal / mtmd**（vendored 为 `ios/Vendor/llama.xcframework`） |
+| 模型 | `model-Q4_K_M.gguf` + `mmproj-bf16.gguf`（主模型 + 多模态 projector，合计约 5.9GB，不入库） |
+| 输入 | 视频抽帧（最多 32 帧）→ 音频 WAV（最多 30 秒）→ 中文文字指令 |
 | 输出 | 模型只产出 **B01–B09 的 9 位二进制码**（`^[01]{9}$`）；最终 JSON（含 B10）由 **app 端拼装**后渲染为中文报告 |
-| 设备 | iPhone（真机用 Metal GPU；模拟器用 CPU，自动回退）。真机实测推理峰值 **≈1.2GB**（mmap 加载，7.8GB 文件多为干净文件页，不计入 jetsam footprint） |
+| 设备 | iPhone 真机优先使用 Metal；模拟器/本机编译路径用于集成验证 |
 
-> LiteRT-LM 既能在**真机（GPU）**也能在**模拟器（CPU）**运行多模态；MLX 仅限真机 Metal、无法在模拟器跑，故迁移到 LiteRT-LM。
+> 当前不再走旧的 `.litertlm` 路径。旧文件如果还在 `ios/Model/`，不会被当前 `project.yml` 和 `ScreeningService` 引用。
 
 ## 接入规范（对齐模型侧官方文档）
 
-抽帧、尺寸、prompt、解码参数严格复现训练配置，详见 [`docs/ios-integration-report.md`](docs/ios-integration-report.md)：
+抽帧、尺寸、prompt、解码参数严格复现 Mac/Linux GGUF 评估配置，详见仓库根目录的 [`docs/ios_gguf_code9_waudio_integration.md`](../docs/ios_gguf_code9_waudio_integration.md)：
 
-- 抽帧：`frame_count = max(1, min(16, ceil(时长秒)))`；时间戳对齐本地 eval 的 ffmpeg `fps` 采样（`t = i*dur/frame_count`，起点锚定、顺序、覆盖整段）；每帧宽 512、保持比例、RGB、JPEG q95。
-- 顺序：`frames → text instruction`（本包无 audio）；每段片段**新建 conversation，无历史**。
+- 抽帧：`frame_count = max(1, min(32, ceil(时长秒)))`；时间戳对齐本地 eval 的 ffmpeg `fps` 采样（`t = i*dur/frame_count`，起点锚定、顺序、覆盖整段）；每帧宽 512、保持比例、RGB、JPEG q95。
+- 音频：单声道 16 kHz PCM WAV，最多 30 秒。
+- 顺序：`frames → audio → text instruction`；每段片段**新建 conversation，无历史**。
 - system / user prompt 逐字使用 `prompts/zh` 中文原文（**不让模型吐 JSON**）。
-- 解码：确定性 `temperature=0 / topK=1 / topP=1`。
+- 解码：确定性 `temperature=0 / topK=1 / topP=1`，并使用 GBNF grammar 约束正好 9 位。
 - 输出：模型回 **9 位二进制码**，端上 `^[01]{9}$` 严格校验 → 拼装 JSON（`B10 = (B01..B09 全 false)`），非法码拦截。
 
 ## 状态
 
-- ✅ iOS 接入完成：抽帧、输入顺序、中文 prompt、确定性解码、9 位码解析 + 端侧拼装 JSON、B01–B10 中文报告渲染。
-- ✅ **真机跑通**：iPhone 17 Pro / Metal GPU / 离线，完整链路出报告，推理峰值 ≈1.2GB。
-- ✅ **盲测有区分力**：对带真值片段盲跑，主导标签 B08 两段均正确命中（与模型侧 LiteRT W4 指标 micro-F1≈0.46 一致），不再是早期 Q4 版的全 false。
-- ✅ **同模型 Mac/iOS 逐位一致**：`/tmp/litertlm-run`（Mac CLI）与 iOS 端对同一片段输出相同 9 位码，验证抽帧/prompt/解码对齐。
+- ✅ SwiftPM core contract 测试通过：parser、B10 派生、prompt/media 顺序、采样参数、中文 prompt。
+- ✅ iOS package simulator/device triple build 通过：`GlimmerCore` + `AsdGgufNative` + `GlimmerIOS`。
+- ✅ 已生成 `ios/Vendor/llama.xcframework`，包含 `libllama`、`ggml`、`ggml-metal`、`ggml-blas`、`mtmd`。
+- ⚠️ 真机运行前需要把两个 GGUF 权重复制成 `ios/Model/` 下的真实文件；下载权重流程后续再做。
 
 ## 目录
 
-- `ios/` — 端侧 SwiftUI app（LiteRT-LM）
-  - `Package.swift` — SwiftPM package，管理 `GlimmerIOS`、`LiteRTLM` 和 `CLiteRTLM.xcframework`
+- `core/` — 跨平台 SwiftPM core，保存 GGUF 推理合约、prompt、parser 和测试。
+- `ios/` — 端侧 SwiftUI app（GGUF）
+  - `Package.swift` — SwiftPM package，管理 `GlimmerIOS`、`AsdGgufNative` 和 `llama.xcframework`
   - `App/` — 极薄 iOS app host，只负责 app entrypoint、Info.plist、entitlements、bundle/signing
-  - `Sources/GlimmerIOS/ScreeningService.swift` — 引擎加载（GPU→CPU 回退）、system prompt、确定性采样、多帧推理
-  - `Sources/GlimmerIOS/AnalysisView.swift` — 抽帧（按训练规范）+ 调用推理
+  - `Sources/GlimmerIOS/ScreeningService.swift` — GGUF 权重定位、system prompt、9 位码解析
+  - `Sources/GlimmerIOS/AsdGgufRunner.swift` — Swift runner，串行后台调用 native bridge
+  - `Sources/GlimmerIOS/VideoAudioPreprocessor.swift` — 抽帧 + 音频提取（按 GGUF eval 规范）
+  - `Sources/AsdGgufNative/` — Objective-C++ bridge，直接调用 llama.cpp / mtmd / grammar sampler
   - `Sources/GlimmerIOS/ReportView.swift` — B01–B10 严格校验 + 报告渲染
-  - `Vendor/` — LiteRT-LM Swift 源码 + xcframework
-  - `Model/` — 放 `asd-gemma4-code9.litertlm`（不入库，见「模型获取与放置」）
-- `docs/ios-integration-report.md` — 接入测试报告（输入/输出/问题诊断）
+  - `Vendor/` — `llama.xcframework`
+  - `Model/` — 放 `model-Q4_K_M.gguf` 和 `mmproj-bf16.gguf`（不入库，见「模型获取与放置」）
+- `docs/ios_gguf_code9_waudio_integration.md` — GGUF 接入规范（输入/输出/问题诊断）
 - `finetune/` — LoRA 微调脚本与数据格式
 - `data/` — 样例数据集
 
 ## 模型获取与放置
 
-模型权重**不入库**（`.litertlm` 与 `ios/Model/` 已在 `.gitignore` 忽略；单文件 7.8GB 也超 GitHub 限制）。换机器或交接时需另行获取：
+模型权重**不入库**（`.gguf` 与 `ios/Model/` 已在 `.gitignore` 忽略）。当前真机测试先使用本地复制，后续再做下载权重：
 
 | 项 | 值 |
 |---|---|
-| 文件名 | `asd-gemma4-code9.litertlm` |
-| 来源 | 模型侧 S3：`s3://huzi-nydata/asd-gemma4-code9-qlora-loftq-w4-noaudio.litertlm`（向模型负责人「虎子」要预签名 URL） |
-| 放置路径 | `ios/Model/asd-gemma4-code9.litertlm` |
-| 大小 / 校验 | ≈7.8GB（8,353,991,904 bytes）；下载后建议 `shasum -a 256` 对一次 |
+| 主模型 | `outputs/gguf_experiments/gemma4-asd-code9-waudio-step420/model-Q4_K_M.gguf` |
+| projector | `outputs/gguf_experiments/gemma4-asd-code9-waudio-step420/mmproj-bf16.gguf` |
+| 放置路径 | `ios/Model/model-Q4_K_M.gguf` 和 `ios/Model/mmproj-bf16.gguf` |
+| 大小 | 主模型约 4.9GB，projector 约 946MB |
 
 ```bash
-# 拿到预签名 URL 后：
-curl -L -o ios/Model/asd-gemma4-code9.litertlm "<S3 预签名 URL>"
+cd ios
+./Scripts/prepare-local-gguf-models.sh
 ```
 
-> 文件名必须与 `ios/project.yml`（`Model/asd-gemma4-code9.litertlm`）及 `ScreeningService.modelResource`（`"asd-gemma4-code9"`）一致，否则 app 启动时找不到模型。
+> 真机构建前必须运行上面的脚本。`project.yml` 的 pre/post build script 会检查 bundle 里是非空真实文件，不允许把 symlink 打进 app。
 
 ## 构建（iOS）
 
 ```bash
 cd ios
-# 1. 放入模型：Model/asd-gemma4-code9.litertlm（见上节）
-# 2. 生成工程
+./Scripts/prepare-local-gguf-models.sh
 xcodegen generate
-# 3. 真机构建（需付费开发者账号 + 增大内存权限）
 xcodebuild -project GemmaScreen.xcodeproj -target GemmaScreen \
-  -destination 'id=<设备UDID>' -allowProvisioningUpdates build
+  -destination 'id=<DEVICE_UDID>' -allowProvisioningUpdates build
 ```
 
-本工程的核心代码和 LiteRT-LM 依赖由 SwiftPM 管理；`GemmaScreen.xcodeproj` 只作为 iOS app host，负责 bundle、签名、entitlements 和安装运行。日常可以不打开 Xcode，直接用 `xcodegen` + `xcodebuild`。
+本工程的核心代码和 native bridge 由 SwiftPM 管理；`GemmaScreen.xcodeproj` 只作为 iOS app host，负责 bundle、签名、entitlements 和安装运行。日常可以不打开 Xcode，直接用 `xcodegen` + `xcodebuild`。
 
-> 需要 `increased-memory-limit` + `extended-virtual-addressing` 权限，要求**付费 Apple Developer 账号**。模型经 mmap 加载，真机推理峰值实测 ≈1.2GB（远低于 7.8GB 文件体积）。
+> 当前本机 Xcode 环境可能要求 iOS 26.4 runtime；如果 `xcodebuild` 报 destination 不可用，需要先在 Xcode Components 安装对应 runtime，或切到匹配的 Xcode/设备 SDK。
 
 ## 行为标签（B01–B10）
 

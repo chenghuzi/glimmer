@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import AVFoundation
 
 struct AnalysisView: View {
@@ -71,47 +70,19 @@ struct AnalysisView: View {
     }
 
     private func run() async {
-        // 按训练规范抽帧（多帧分开传），喂入模型
-        let frameURLs = await extractFrameFiles(videoURL)
-        guard !frameURLs.isEmpty else {
+        let media = await VideoAudioPreprocessor.prepare(videoURL: videoURL)
+        guard !media.frameURLs.isEmpty else {
             service.output = "无法从视频中提取画面，请换一段视频重试。"
             return
         }
         do {
-            try await service.analyze(imageURLs: frameURLs, instruction: ScreeningService.userInstruction)
+            try await service.analyze(
+                frameURLs: media.frameURLs,
+                audioURL: media.audioURL,
+                instruction: ScreeningService.userInstruction
+            )
         } catch {
             service.output = "出错：\(error.localizedDescription)"
         }
-    }
-
-    /// 按训练规范抽帧：frame_count = max(1, min(16, ceil(时长)))，覆盖整段 clip，
-    /// 每帧宽 512、保持宽高比、RGB，存成临时 JPEG，返回按时间顺序的文件 URL。
-    private func extractFrameFiles(_ url: URL) async -> [URL] {
-        let asset = AVURLAsset(url: url)
-        let dur = CMTimeGetSeconds((try? await asset.load(.duration)) ?? .zero)
-        guard dur > 0 else { return [] }
-        let frameCount = max(1, min(16, Int(ceil(dur))))
-
-        let gen = AVAssetImageGenerator(asset: asset)
-        gen.appliesPreferredTrackTransform = true
-        gen.maximumSize = CGSize(width: 512, height: 10000)   // 宽 512，高按比例（不裁剪不拉伸）
-        gen.requestedTimeToleranceBefore = .zero
-        gen.requestedTimeToleranceAfter = .zero
-
-        // 时间戳对齐本地 eval 的 ffmpeg fps 采样：effective_fps = frameCount/dur，
-        // 第 i 帧 t = i/effective_fps = i*dur/frameCount（起点锚定、顺序、覆盖整段）。
-        var urls: [URL] = []
-        for i in 0..<frameCount {
-            let t = Double(i) * dur / Double(frameCount)
-            guard let cg = try? await gen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image
-            else { continue }
-            if let data = UIImage(cgImage: cg).jpegData(compressionQuality: 0.95) {
-                let out = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(String(format: "frame_%02d_", i) + UUID().uuidString + ".jpg")
-                try? data.write(to: out)
-                urls.append(out)
-            }
-        }
-        return urls
     }
 }

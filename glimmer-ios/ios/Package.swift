@@ -13,20 +13,34 @@ let package = Package(
             targets: ["GlimmerIOS"]
         )
     ],
+    dependencies: [
+        .package(path: "../core")
+    ],
     targets: [
         .binaryTarget(
-            name: "CLiteRTLM",
-            path: "Vendor/CLiteRTLM.xcframework"
+            name: "llama",
+            path: "Vendor/llama.xcframework"
         ),
         .target(
-            name: "LiteRTLM",
-            dependencies: ["CLiteRTLM"],
-            path: "Vendor/LiteRTLM"
+            name: "AsdGgufNative",
+            dependencies: ["llama"],
+            path: "Sources/AsdGgufNative",
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedLibrary("c++"),
+                .linkedFramework("Accelerate"),
+                .linkedFramework("Foundation"),
+                .linkedFramework("Metal")
+            ]
         ),
         .target(
             name: "GlimmerIOS",
-            dependencies: ["LiteRTLM"],
+            dependencies: [
+                "AsdGgufNative",
+                .product(name: "GlimmerCore", package: "core")
+            ],
             path: "Sources/GlimmerIOS"
         )
-    ]
+    ],
+    cxxLanguageStandard: .cxx17
 )
