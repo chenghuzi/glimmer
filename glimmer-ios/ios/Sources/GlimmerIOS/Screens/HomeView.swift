@@ -13,7 +13,7 @@ struct HomeView: View {
 
             VStack(spacing: 0) {
                 header
-                    .padding(.top, 16)
+                    .padding(.top, 44)
 
                 videoCard
                     .padding(.top, 24)
