@@ -27,6 +27,15 @@ final class ScreeningService {
 
     static let userInstruction = AsdGgufPrompts.userInstruction
 
+    func restore(report: AsdBehaviorReport, messages: [ExplanationChatMessage]) {
+        self.report = report
+        self.output = report.jsonString
+        self.chatMessages = messages
+        self.isChatReady = false
+        self.isChatResponding = false
+        self.chatError = nil
+    }
+
     func analyze(frameURLs: [URL], audioURL: URL?, instruction: String) async throws {
         try await ensureLoaded()
 
@@ -56,7 +65,11 @@ final class ScreeningService {
         }
     }
 
-    func beginExplanationChat(frameURLs: [URL], audioURL: URL?) async throws {
+    func beginExplanationChat(
+        frameURLs: [URL],
+        audioURL: URL?,
+        initialMessages: [ExplanationChatMessage] = []
+    ) async throws {
         guard let report else { return }
         try await ensureLoaded()
 
@@ -64,7 +77,7 @@ final class ScreeningService {
         isChatReady = false
         isChatResponding = false
         chatError = nil
-        chatMessages = []
+        chatMessages = initialMessages
 
         let request = AsdGgufRequestBuilder.build(
             frameURLs: frameURLs,
@@ -74,7 +87,7 @@ final class ScreeningService {
         try await runner.beginExplanationSession(
             systemPrompt: AsdExplanationPrompts.system,
             request: request,
-            assistantContext: AsdExplanationPrompts.assistantResultContext(report: report)
+            assistantContext: assistantContext(report: report, previousMessages: initialMessages)
         )
         isChatReady = true
         statusText = "已就绪（本地 · 可对话）"
@@ -107,5 +120,27 @@ final class ScreeningService {
 
     static func assembleJSON(fromCode raw: String) -> String? {
         AsdBehaviorParser.parse(raw)?.jsonString
+    }
+
+    private func assistantContext(
+        report: AsdBehaviorReport,
+        previousMessages: [ExplanationChatMessage]
+    ) -> String {
+        let baseContext = AsdExplanationPrompts.assistantResultContext(report: report)
+        let transcript = previousMessages
+            .filter { !$0.isError }
+            .map { message in
+                let role = message.role == .user ? "User" : "Assistant"
+                return "\(role): \(message.text)"
+            }
+            .joined(separator: "\n")
+
+        guard !transcript.isEmpty else { return baseContext }
+        return """
+        \(baseContext)
+
+        Previous conversation:
+        \(transcript)
+        """
     }
 }

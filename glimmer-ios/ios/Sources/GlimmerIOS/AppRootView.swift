@@ -47,6 +47,9 @@ struct IdentifiableURL: Identifiable {
 
 /// 主界面的流程：HomeView →（点卡片）系统来源选择器(拍摄/相册) → 拍完确认弹窗 → AnalyzingView → ReportView
 struct MainFlow: View {
+    @State private var activeTab: GlimmerTab = .analyze
+    @State private var selectedReportID: UUID?
+    @State private var reportStore = ReportConversationStore()
     @State private var showSourceSheet = false
     @State private var showLibrary = false
     @State private var showCamera = false
@@ -60,7 +63,31 @@ struct MainFlow: View {
 
     var body: some View {
         ZStack {
-            HomeView(onStart: { showSourceSheet = true })
+            switch activeTab {
+            case .analyze:
+                HomeView(
+                    onStart: { showSourceSheet = true },
+                    onSelectReport: { activeTab = .report }
+                )
+            case .report:
+                if let selectedReportID, reportStore.record(id: selectedReportID) != nil {
+                    ReportHistoryDetailView(
+                        store: reportStore,
+                        recordID: selectedReportID,
+                        onBack: { self.selectedReportID = nil },
+                        onSelectAnalyze: {
+                            self.selectedReportID = nil
+                            activeTab = .analyze
+                        }
+                    )
+                } else {
+                    ReportListView(
+                        store: reportStore,
+                        onOpen: { record in selectedReportID = record.id },
+                        onSelectAnalyze: { activeTab = .analyze }
+                    )
+                }
+            }
 
             if pendingURL != nil {
                 CaptureDoneDialog(
@@ -76,6 +103,9 @@ struct MainFlow: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: pendingURL)
+        .task {
+            reportStore.load()
+        }
         .confirmationDialog("选择视频来源", isPresented: $showSourceSheet, titleVisibility: .hidden) {
             if cameraAvailable {
                 Button("拍摄视频") {
@@ -119,7 +149,7 @@ struct MainFlow: View {
             .ignoresSafeArea()
         }
         .fullScreenCover(item: $analysisURL) { item in
-            AnalysisFlowView(videoURL: item.url)
+            AnalysisFlowView(videoURL: item.url, reportStore: reportStore)
         }
     }
 }

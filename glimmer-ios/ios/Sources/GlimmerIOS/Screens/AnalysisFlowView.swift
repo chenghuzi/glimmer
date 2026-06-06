@@ -10,11 +10,13 @@ import AVFoundation
 /// 等模型出 code（streamFinished）且动画跑完，再切报告页。
 struct AnalysisFlowView: View {
     let videoURL: URL
+    var reportStore: ReportConversationStore? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var service = ScreeningService()
     @State private var started = false
     @State private var showReport = false
+    @State private var reportRecordID: UUID?
     @State private var videoDuration: String = "00:00"
     /// 预处理产物留存，供报告页开启解释对话时复用。
     @State private var media: PreparedGgufMedia?
@@ -39,7 +41,10 @@ struct AnalysisFlowView: View {
                     isChatReady: service.isChatReady,
                     isResponding: service.isChatResponding,
                     onSend: { text in Task { await service.sendChatMessage(text) } },
-                    onBack: { dismiss() }
+                    onBack: { dismiss() },
+                    onSelectTab: { tab in
+                        if tab == .analyze { dismiss() }
+                    }
                 )
             } else {
                 AnalyzingView(
@@ -48,6 +53,8 @@ struct AnalysisFlowView: View {
                     onBack: { dismiss() },
                     streamFinished: streamFinished,
                     onAnimationDone: {
+                        guard !showReport else { return }
+                        persistReportIfNeeded()
                         showReport = true
                         Task { await startChat() }
                     }
@@ -59,6 +66,10 @@ struct AnalysisFlowView: View {
             started = true
             Task { videoDuration = await Self.readDuration(videoURL) }
             await run()
+        }
+        .onChange(of: service.chatMessages) { _, messages in
+            guard let reportRecordID else { return }
+            reportStore?.updateMessages(recordID: reportRecordID, messages: messages)
         }
     }
 
@@ -91,6 +102,24 @@ struct AnalysisFlowView: View {
         } catch {
             // 对话开启失败不阻塞报告展示，仅留出错状态
             service.chatError = "本地对话初始化失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func persistReportIfNeeded() {
+        guard reportRecordID == nil, let reportStore, let report = service.report, let media else { return }
+        do {
+            let record = try reportStore.createRecord(
+                timestamp: timestamp,
+                videoURL: videoURL,
+                videoDuration: videoDuration,
+                report: report,
+                media: media
+            )
+            reportRecordID = record.id
+        } catch {
+            #if DEBUG
+            print("Failed to persist report: \(error.localizedDescription)")
+            #endif
         }
     }
 

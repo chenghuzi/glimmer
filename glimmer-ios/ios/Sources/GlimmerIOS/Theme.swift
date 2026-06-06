@@ -33,7 +33,7 @@ enum GTheme {
     // 背景
     static let splashBg = Color(hex: 0xEDE9DF)   // 启动/加载：暖奶油底 rgb(237,233,223)
     static let bg = Color(hex: 0xF6F4EF)         // 首页/报告：浅奶油底（逐屏精校）
-    static let blueCard = Color(hex: 0xE7EEF3)   // 首页视频诊断卡：浅蓝
+    static let blueCard = Color(hex: 0xE7EEF3)   // 首页视频分析卡：浅蓝
     static let card = Color(hex: 0xF2F1EC)        // 通用浅卡片
     static let white = Color(hex: 0xFFFFFF)
 

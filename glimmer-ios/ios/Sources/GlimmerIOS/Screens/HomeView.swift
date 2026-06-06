@@ -2,10 +2,11 @@ import SwiftUI
 
 /// 屏3 首页 — Figma 64:414 「进入App 页面」
 ///
-/// 自适应布局：标题靠左、探头星星从右上探出；视频诊断卡片撑满宽度；
+/// 自适应布局：标题靠左、探头星星从右上探出；视频分析卡片撑满宽度；
 /// 隐私文案 + 底部 Tab 自然落在安全区内。
 struct HomeView: View {
     var onStart: () -> Void = {}
+    var onSelectReport: () -> Void = {}
 
     var body: some View {
         ZStack {
@@ -25,7 +26,9 @@ struct HomeView: View {
 
                 Spacer(minLength: 0)
 
-                GlimmerTabBar(active: .analyze)
+                GlimmerTabBar(active: .analyze) { tab in
+                    if tab == .report { onSelectReport() }
+                }
             }
             .padding(.horizontal, 16)
         }
@@ -36,7 +39,7 @@ struct HomeView: View {
     private var header: some View {
         ZStack(alignment: .topTrailing) {
             HStack {
-                Text("选择你要开始的\n诊断方式")
+                Text("选择你要开始的\n分析方式")
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(GTheme.ink)
                     .lineSpacing(6)
@@ -53,7 +56,7 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - 视频诊断卡片（64:444）
+    // MARK: - 视频分析卡片（64:444）
 
     private var videoCard: some View {
         Button(action: onStart) {
@@ -73,11 +76,11 @@ struct HomeView: View {
                 // 底部信息行（64:445）
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("视频诊断")
+                        Text("视频分析")
                             .font(.system(size: 20, weight: .medium))
                             .foregroundStyle(GTheme.ink)
                             .lineLimit(1)
-                        Text("拍摄孩子的视频，通过本地模型进行诊断")
+                        Text("拍摄孩子的视频，通过本地模型进行分析")
                             .font(.system(size: 13))
                             .foregroundStyle(GTheme.subtle)
                             .lineLimit(1)
