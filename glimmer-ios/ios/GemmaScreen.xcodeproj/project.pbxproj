@@ -22,6 +22,7 @@
 		484A01B7FDDEA11C83037D8E /* sample_pos.jpg in Resources */ = {isa = PBXBuildFile; fileRef = E9B954A2566A00FE2757E870 /* sample_pos.jpg */; };
 		4FA78C29074F5FCC0BBCF182 /* sample_neg.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5269FACE3367A18D5A595080 /* sample_neg.jpg */; };
 		5742BAC182CC49572C7F4FEA /* phone_rec.png in Resources */ = {isa = PBXBuildFile; fileRef = CBAA3B8AF240F08677D969D3 /* phone_rec.png */; };
+		5D7D01B541D13DA5FAB5F808 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1C2FCEE47B6BCEFBCB9D822D /* Assets.xcassets */; };
 		64DA93B2BD00B4DE6965AB8F /* icon_menu.png in Resources */ = {isa = PBXBuildFile; fileRef = 8588D48E122BDF6327DAACE7 /* icon_menu.png */; };
 		72E3E77888ED32AA91A4C50D /* icon_play.png in Resources */ = {isa = PBXBuildFile; fileRef = E8C4C001A784680AC1D05D34 /* icon_play.png */; };
 		75E64E4838C13039D92D51C0 /* glimmer_wordmark.png in Resources */ = {isa = PBXBuildFile; fileRef = 5D63935F0D5A7EC7D8030E30 /* glimmer_wordmark.png */; };
@@ -42,6 +43,7 @@
 		D0AC16EA3FB450FB4C9588FA /* phone_rec.png in Resources */ = {isa = PBXBuildFile; fileRef = CBAA3B8AF240F08677D969D3 /* phone_rec.png */; };
 		DF0C897BB2395454BF8FEC0C /* star_knob.png in Resources */ = {isa = PBXBuildFile; fileRef = 80DB9C005589768339E7D5B7 /* star_knob.png */; };
 		E11E930FAA063C2AEBB5B6F3 /* sample_pos.jpg in Resources */ = {isa = PBXBuildFile; fileRef = E9B954A2566A00FE2757E870 /* sample_pos.jpg */; };
+		E9D42EF10A360EBEC992B048 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1C2FCEE47B6BCEFBCB9D822D /* Assets.xcassets */; };
 		F4EB7B2209ED64CDFAACA2EF /* light_beam.png in Resources */ = {isa = PBXBuildFile; fileRef = A2ED7CCDE95191949FDD446A /* light_beam.png */; };
 		F634262A13061BFB96E804EE /* tab_report.png in Resources */ = {isa = PBXBuildFile; fileRef = 233EA42F67E52DD518BB4765 /* tab_report.png */; };
 		F6DAFC7839E8D6425CEC58DB /* star_splash.png in Resources */ = {isa = PBXBuildFile; fileRef = 064EEA933D0BD0289350339A /* star_splash.png */; };
@@ -55,6 +57,7 @@
 		064EEA933D0BD0289350339A /* star_splash.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = star_splash.png; sourceTree = "<group>"; };
 		0FD27B70134137C85DC9BB3A /* GemmaScreen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GemmaScreen.entitlements; sourceTree = "<group>"; };
 		150E0CEEB930B1786D250C61 /* GemmaScreenHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GemmaScreenHostApp.swift; sourceTree = "<group>"; };
+		1C2FCEE47B6BCEFBCB9D822D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */ = {isa = PBXFileReference; path = "mmproj-bf16.gguf"; sourceTree = "<group>"; };
 		228261E7D56C871809233EF5 /* phone.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = phone.png; sourceTree = "<group>"; };
 		233EA42F67E52DD518BB4765 /* tab_report.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = tab_report.png; sourceTree = "<group>"; };
@@ -140,6 +143,7 @@
 		AF99EAA21695FAB66AFACE29 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				1C2FCEE47B6BCEFBCB9D822D /* Assets.xcassets */,
 				F4BF7553A935DE14359D6A4D /* duck.png */,
 				5D63935F0D5A7EC7D8030E30 /* glimmer_wordmark.png */,
 				9396676C1D70309187F7B3B8 /* icon_ai_small.png */,
@@ -274,6 +278,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E9D42EF10A360EBEC992B048 /* Assets.xcassets in Resources */,
 				F9481640D1429695645FBBB3 /* duck.png in Resources */,
 				17099357054F7EADBF9D96C0 /* glimmer_wordmark.png in Resources */,
 				82702FE9D1786C6A5755D8A3 /* icon_ai_small.png in Resources */,
@@ -300,6 +305,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5D7D01B541D13DA5FAB5F808 /* Assets.xcassets in Resources */,
 				1C87BCF868601F3FF000F31B /* duck.png in Resources */,
 				75E64E4838C13039D92D51C0 /* glimmer_wordmark.png in Resources */,
 				B39CBCE20A86B0C7E989EB5E /* icon_ai_small.png in Resources */,
