@@ -1,12 +1,19 @@
 import Foundation
 import AVFoundation
+import GlimmerCore
 
 enum AudioExtractor {
-    /// 从视频里抽出音轨 → 16kHz 单声道 16-bit WAV 文件（语音模型常用格式）
     static func extractWav(from videoURL: URL) async -> URL? {
         let asset = AVURLAsset(url: videoURL)
+        let duration = CMTimeGetSeconds((try? await asset.load(.duration)) ?? .zero)
+        let clippedDuration = AsdGgufContract.audioClipDuration(durationSeconds: duration)
         guard let track = try? await asset.loadTracks(withMediaType: .audio).first,
-              let reader = try? AVAssetReader(asset: asset) else { return nil }
+              let reader = try? AVAssetReader(asset: asset),
+              clippedDuration > 0 else { return nil }
+        reader.timeRange = CMTimeRange(
+            start: .zero,
+            duration: CMTime(seconds: clippedDuration, preferredTimescale: 600)
+        )
 
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,

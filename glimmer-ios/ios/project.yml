@@ -14,11 +14,43 @@ targets:
     sources:
       - App
       - Resources
-      - path: Model/asd-gemma4-code9.litertlm
+      - path: Model/model-Q4_K_M.gguf
+        buildPhase: resources
+      - path: Model/mmproj-bf16.gguf
         buildPhase: resources
     dependencies:
       - package: GlimmerIOS
         product: GlimmerIOS
+    preBuildScripts:
+      - name: Verify GGUF model sources
+        script: |
+          set -euo pipefail
+          for name in model-Q4_K_M.gguf mmproj-bf16.gguf; do
+            path="${SRCROOT}/Model/${name}"
+            if [ ! -s "${path}" ]; then
+              echo "Missing or empty GGUF model source: ${path}" >&2
+              echo "Run: ${SRCROOT}/Scripts/prepare-local-gguf-models.sh" >&2
+              exit 1
+            fi
+          done
+    postBuildScripts:
+      - name: Verify bundled GGUF model files
+        script: |
+          set -euo pipefail
+          bundle_dir="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+          for name in model-Q4_K_M.gguf mmproj-bf16.gguf; do
+            path="${bundle_dir}/${name}"
+            if [ ! -s "${path}" ]; then
+              echo "Missing or empty bundled GGUF model: ${path}" >&2
+              echo "Run: ${SRCROOT}/Scripts/prepare-local-gguf-models.sh" >&2
+              exit 1
+            fi
+            if [ -L "${path}" ]; then
+              echo "Bundled GGUF model must be a real file, not a symlink: ${path}" >&2
+              echo "Run: ${SRCROOT}/Scripts/prepare-local-gguf-models.sh" >&2
+              exit 1
+            fi
+          done
     info:
       path: App/Info.plist
       properties:

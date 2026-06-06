@@ -9,19 +9,21 @@
 /* Begin PBXBuildFile section */
 		2C97FDC5462D22708F4887BC /* GemmaScreenHostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150E0CEEB930B1786D250C61 /* GemmaScreenHostApp.swift */; };
 		484A01B7FDDEA11C83037D8E /* sample_pos.jpg in Resources */ = {isa = PBXBuildFile; fileRef = E9B954A2566A00FE2757E870 /* sample_pos.jpg */; };
+		824AF9D8AB67861A91F6B9B4 /* mmproj-bf16.gguf in Resources */ = {isa = PBXBuildFile; fileRef = 1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */; };
 		8496FA155CAAF2DFF67C2CEF /* GlimmerIOS in Frameworks */ = {isa = PBXBuildFile; productRef = A6EB668DD5DD39CE5114C3AA /* GlimmerIOS */; };
-		ABE8D3BC70039242D6E19958 /* asd-gemma4-code9.litertlm in Resources */ = {isa = PBXBuildFile; fileRef = 01FA75EEC3B00E5590087D1D /* asd-gemma4-code9.litertlm */; };
 		BA8E07EB1CCD3216B123B8F2 /* phone.png in Resources */ = {isa = PBXBuildFile; fileRef = 228261E7D56C871809233EF5 /* phone.png */; };
+		F85D88D398B677E48AA11384 /* model-Q4_K_M.gguf in Resources */ = {isa = PBXBuildFile; fileRef = 24A64C1E7E2435E60BA79368 /* model-Q4_K_M.gguf */; };
 		F9481640D1429695645FBBB3 /* duck.png in Resources */ = {isa = PBXBuildFile; fileRef = F4BF7553A935DE14359D6A4D /* duck.png */; };
 		FF47FB7DE6E3AF3D6887380E /* sample_neg.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5269FACE3367A18D5A595080 /* sample_neg.jpg */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		01FA75EEC3B00E5590087D1D /* asd-gemma4-code9.litertlm */ = {isa = PBXFileReference; path = "asd-gemma4-code9.litertlm"; sourceTree = "<group>"; };
 		0FD27B70134137C85DC9BB3A /* GemmaScreen.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GemmaScreen.entitlements; sourceTree = "<group>"; };
 		150E0CEEB930B1786D250C61 /* GemmaScreenHostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GemmaScreenHostApp.swift; sourceTree = "<group>"; };
+		1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "mmproj-bf16.gguf"; sourceTree = "<group>"; };
 		228261E7D56C871809233EF5 /* phone.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = phone.png; sourceTree = "<group>"; };
-		3419208DA37B81490B0596DA /* GemmaScreen.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GemmaScreen.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		24A64C1E7E2435E60BA79368 /* model-Q4_K_M.gguf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "model-Q4_K_M.gguf"; sourceTree = "<group>"; };
+		3419208DA37B81490B0596DA /* GemmaScreen.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GemmaScreen.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4B1768EB679DCA829DD213F3 /* ios */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ios; path = .; sourceTree = SOURCE_ROOT; };
 		5269FACE3367A18D5A595080 /* sample_neg.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = sample_neg.jpg; sourceTree = "<group>"; };
 		9C6D5993D5439A74A1484691 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -81,7 +83,8 @@
 		E3C8C12B0519B2B8C832AE99 /* Model */ = {
 			isa = PBXGroup;
 			children = (
-				01FA75EEC3B00E5590087D1D /* asd-gemma4-code9.litertlm */,
+				1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */,
+				24A64C1E7E2435E60BA79368 /* model-Q4_K_M.gguf */,
 			);
 			path = Model;
 			sourceTree = "<group>";
@@ -104,9 +107,11 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0AAEEE4B6FB4D4A7E9A6ADC3 /* Build configuration list for PBXNativeTarget "GemmaScreen" */;
 			buildPhases = (
+				609BC5F159D4D3EF8A5503EE /* Verify GGUF model sources */,
 				42C5B4CB1B1EE3598DC75696 /* Sources */,
 				276F925EC695385CDA0D72C8 /* Resources */,
 				E15741C9F76C64AA4D4F970A /* Frameworks */,
+				9F7B238552E0A1449F9B0D92 /* Verify bundled GGUF model files */,
 			);
 			buildRules = (
 			);
@@ -130,7 +135,6 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					8B7799559E9905FC6C772239 = {
-						DevelopmentTeam = XN9XFCT4XH;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -162,8 +166,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				ABE8D3BC70039242D6E19958 /* asd-gemma4-code9.litertlm in Resources */,
 				F9481640D1429695645FBBB3 /* duck.png in Resources */,
+				824AF9D8AB67861A91F6B9B4 /* mmproj-bf16.gguf in Resources */,
+				F85D88D398B677E48AA11384 /* model-Q4_K_M.gguf in Resources */,
 				BA8E07EB1CCD3216B123B8F2 /* phone.png in Resources */,
 				FF47FB7DE6E3AF3D6887380E /* sample_neg.jpg in Resources */,
 				484A01B7FDDEA11C83037D8E /* sample_pos.jpg in Resources */,
@@ -171,6 +176,45 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		609BC5F159D4D3EF8A5503EE /* Verify GGUF model sources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Verify GGUF model sources";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nfor name in model-Q4_K_M.gguf mmproj-bf16.gguf; do\n  path=\"${SRCROOT}/Model/${name}\"\n  if [ ! -s \"${path}\" ]; then\n    echo \"Missing or empty GGUF model source: ${path}\" >&2\n    echo \"Run: ${SRCROOT}/Scripts/prepare-local-gguf-models.sh\" >&2\n    exit 1\n  fi\ndone\n";
+		};
+		9F7B238552E0A1449F9B0D92 /* Verify bundled GGUF model files */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Verify bundled GGUF model files";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\nbundle_dir=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\nfor name in model-Q4_K_M.gguf mmproj-bf16.gguf; do\n  path=\"${bundle_dir}/${name}\"\n  if [ ! -s \"${path}\" ]; then\n    echo \"Missing or empty bundled GGUF model: ${path}\" >&2\n    echo \"Run: ${SRCROOT}/Scripts/prepare-local-gguf-models.sh\" >&2\n    exit 1\n  fi\n  if [ -L \"${path}\" ]; then\n    echo \"Bundled GGUF model must be a real file, not a symlink: ${path}\" >&2\n    echo \"Run: ${SRCROOT}/Scripts/prepare-local-gguf-models.sh\" >&2\n    exit 1\n  fi\ndone\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		42C5B4CB1B1EE3598DC75696 /* Sources */ = {
@@ -247,7 +291,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/GemmaScreen.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = XN9XFCT4XH;
+				DEVELOPMENT_TEAM = YZ2FQMUZGC;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -255,7 +299,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "-all_load";
-				PRODUCT_BUNDLE_IDENTIFIER = cn.youyou.gemmascreen;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.enactflow.glimmer;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -270,7 +314,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/GemmaScreen.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = XN9XFCT4XH;
+				DEVELOPMENT_TEAM = YZ2FQMUZGC;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -278,7 +322,7 @@
 					"@executable_path/Frameworks",
 				);
 				OTHER_LDFLAGS = "-all_load";
-				PRODUCT_BUNDLE_IDENTIFIER = cn.youyou.gemmascreen;
+				PRODUCT_BUNDLE_IDENTIFIER = cn.enactflow.glimmer;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
