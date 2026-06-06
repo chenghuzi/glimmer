@@ -2,29 +2,33 @@ import SwiftUI
 
 /// 屏7 报告结论 + 屏8 追问对话 — Figma 53:751 + 53:994。
 ///
-/// - 结论散文按 SSE 节奏一字一字揭示（视觉壳：本地 mock 文本 + 节流；
-///   真实推理接入时只需把 `fullConclusion` 换成流式累积值）。
-/// - 对话区初始为空，只有用户输入会出现气泡。
-/// - Player 时长由外部传入真值（AVAsset 异步读取）。
+/// 纯展示视图（dumb view）：
+/// - 结论散文（来自 `report.conclusionText`，模板化、零幻觉）按 SSE 节奏逐字揭示。
+/// - 对话区由外部 `messages` 驱动（chenghuzi 的本地解释对话）；初始为空，用户提问后出现。
+/// - 输入框在 `isChatReady` 前禁用（模型正在把视频灌进 KV-cache）。
 struct ReportConversationView: View {
     var timestamp: String = "2026-06-03 12:12:12"
     var videoTitle: String = "视频"
     var videoDuration: String = "00:00"
-    var fullConclusion: String
+    var conclusion: String
+    var messages: [ExplanationChatMessage] = []
+    var isChatReady: Bool = false
+    var isResponding: Bool = false
+    var onSend: (String) -> Void = { _ in }
     var onBack: () -> Void = {}
 
-    // 结论 SSE 节流：30ms/字符（中文约 30 字/秒）
-    @State private var revealedConclusionCount: Int = 0
+    // 结论 SSE 节流：30ms/字符
+    @State private var revealedCount: Int = 0
     private let charInterval: Duration = .milliseconds(30)
-
-    // 用户输入 → 对话气泡列表
-    @State private var messages: [ChatMessage] = []
     @State private var draft: String = ""
 
     private var revealedConclusion: String {
-        let chars = Array(fullConclusion)
-        let n = min(revealedConclusionCount, chars.count)
-        return String(chars.prefix(n))
+        let chars = Array(conclusion)
+        return String(chars.prefix(min(revealedCount, chars.count)))
+    }
+
+    private var canSend: Bool {
+        isChatReady && !isResponding && !draft.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     var body: some View {
@@ -34,33 +38,32 @@ struct ReportConversationView: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 20) {
-                        conclusionAndPlayer
+                        conclusionCard
+                        PlayerBar(title: "\(timestamp) \(videoTitle)", duration: videoDuration)
                         ForEach(messages) { msg in
                             switch msg.role {
-                            case .user:     userBubble(msg.text)
-                            case .assistant: assistantText(msg.text)
+                            case .user:      userBubble(msg.text)
+                            case .assistant: assistantText(msg.text, isError: msg.isError)
                             }
                         }
-                        // 给底部固定层留位 + scroll-to-bottom 锚点
+                        if isResponding { typingIndicator }
                         Color.clear.frame(height: 220).id("__bottom__")
                     }
-                    .padding(.top, 120)         // nav + status bar
+                    .padding(.top, 120)
                     .padding(.horizontal, 16)
                 }
-                .onChange(of: messages.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        proxy.scrollTo("__bottom__", anchor: .bottom)
-                    }
-                }
+                .onChange(of: messages.count) { _, _ in scrollToBottom(proxy) }
+                .onChange(of: isResponding) { _, _ in scrollToBottom(proxy) }
             }
 
-            // 顶部 nav 浮层
+            // 顶部 nav（带不透明背景，遮住下方滚动内容，避免叠字）
             VStack(spacing: 0) {
                 GlimmerNavBar(title: "\(timestamp) 分析报告", onBack: onBack)
                     .padding(.top, 54)
+                    .padding(.bottom, 6)
+                    .background(GTheme.bg)
                 Spacer()
             }
-            .allowsHitTesting(true)
 
             // 底部输入 + 提示 + Tab
             VStack(spacing: 4) {
@@ -74,26 +77,24 @@ struct ReportConversationView: View {
             }
         }
         .ignoresSafeArea(.keyboard)
-        .task(id: fullConclusion) {
-            // SSE 节流揭示
-            revealedConclusionCount = 0
-            let total = fullConclusion.count
-            while revealedConclusionCount < total && !Task.isCancelled {
+        .task(id: conclusion) {
+            revealedCount = 0
+            let total = conclusion.count
+            while revealedCount < total && !Task.isCancelled {
                 try? await Task.sleep(for: charInterval)
                 if Task.isCancelled { return }
-                revealedConclusionCount = min(revealedConclusionCount + 1, total)
+                revealedCount = min(revealedCount + 1, total)
             }
         }
     }
 
-    // MARK: - 结论卡 + Player
-
-    private var conclusionAndPlayer: some View {
-        VStack(spacing: 12) {
-            conclusionCard
-            PlayerBar(title: "\(timestamp) \(videoTitle)", duration: videoDuration)
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.25)) {
+            proxy.scrollTo("__bottom__", anchor: .bottom)
         }
     }
+
+    // MARK: - 结论卡
 
     private var conclusionCard: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -115,7 +116,6 @@ struct ReportConversationView: View {
             .padding(.top, 19)
             .padding(.bottom, 16)
 
-            // 底部免责声明条
             HStack {
                 Spacer()
                 Text("本工具仅作早期信号提示，不构成诊断")
@@ -151,24 +151,35 @@ struct ReportConversationView: View {
         }
     }
 
-    private func assistantText(_ text: String) -> some View {
+    private func assistantText(_ text: String, isError: Bool) -> some View {
         Text(text)
             .font(.system(size: 16, weight: .light))
-            .foregroundStyle(Color(hex: 0x1F2329))
+            .foregroundStyle(isError ? Color(hex: 0xC0392B) : Color(hex: 0x1F2329))
             .lineSpacing(8)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var typingIndicator: some View {
+        HStack(spacing: 0) {
+            Text("正在思考")
+            AnimatedThinkingDots()
+        }
+        .font(.system(size: 16, weight: .light))
+        .foregroundStyle(Color(hex: 0x666664))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - 输入
 
     private var chatInputBar: some View {
         HStack(spacing: 8) {
-            TextField("可以和我聊聊", text: $draft, axis: .vertical)
+            TextField(isChatReady ? "可以和我聊聊" : "正在准备本地对话…", text: $draft, axis: .vertical)
                 .font(.system(size: 16, weight: .light))
                 .foregroundStyle(GTheme.ink)
                 .tint(Color(hex: 0xF8C304))
                 .lineLimit(1...3)
+                .disabled(!isChatReady)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .onSubmit(submit)
@@ -182,8 +193,8 @@ struct ReportConversationView: View {
             }
             .buttonStyle(.plain)
             .padding(.trailing, 8)
-            .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
-            .opacity(draft.trimmingCharacters(in: .whitespaces).isEmpty ? 0.4 : 1.0)
+            .disabled(!canSend)
+            .opacity(canSend ? 1.0 : 0.4)
         }
         .frame(minHeight: 48)
         .background(.white.opacity(0.6))
@@ -193,24 +204,30 @@ struct ReportConversationView: View {
 
     private func submit() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        messages.append(ChatMessage(role: .user, text: trimmed))
+        guard !trimmed.isEmpty, isChatReady, !isResponding else { return }
+        onSend(trimmed)
         draft = ""
-        // 真实推理接入后：在这里 spawn 一个 Task 用本地模型生成 assistant 回复，
-        // 流式 append 到一个 placeholder ChatMessage(role: .assistant) 上。
     }
 }
 
-struct ChatMessage: Identifiable {
-    let id = UUID()
-    enum Role { case user, assistant }
-    let role: Role
-    let text: String
+/// 「正在思考…」循环点点点。
+private struct AnimatedThinkingDots: View {
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.45)) { ctx in
+            let phase = Int(ctx.date.timeIntervalSinceReferenceDate / 0.45) % 4
+            Text(String(repeating: ".", count: phase)).monospacedDigit()
+        }
+    }
 }
 
 #Preview {
     ReportConversationView(
         videoDuration: "00:23",
-        fullConclusion: MockReport.sample.conclusion
+        conclusion: "本次片段中观察到的可关注行为特征包括：物体排列、上肢刻板动作。这些结果只表示片段中的可观察行为线索，不构成诊断。",
+        messages: [
+            ExplanationChatMessage(role: .user, text: "所以小朋友现在这种行为是有一定倾向性的么？"),
+            ExplanationChatMessage(role: .assistant, text: "视频里孩子反复把罐头叠高、排列，这类重复摆弄物品的动作是筛查里关注的线索之一。不过单段视频不一定很明显，建议结合更多日常场景观察。")
+        ],
+        isChatReady: true
     )
 }
