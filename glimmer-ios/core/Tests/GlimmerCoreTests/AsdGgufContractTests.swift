@@ -36,6 +36,34 @@ final class AsdGgufContractTests: XCTestCase {
         XCTAssertEqual(AsdGgufContract.sampleTime(frameIndex: 0, frameCount: 4, durationSeconds: 4.0), 0.0)
         XCTAssertEqual(AsdGgufContract.sampleTime(frameIndex: 1, frameCount: 4, durationSeconds: 4.0), 1.0)
         XCTAssertEqual(AsdGgufContract.sampleTime(frameIndex: 3, frameCount: 4, durationSeconds: 4.0), 3.0)
+        XCTAssertEqual(AsdGgufContract.sampleTimes(frameCount: 4, durationSeconds: 4.0), [0.0, 1.0, 2.0, 3.0])
+        XCTAssertEqual(AsdGgufContract.sampleTimes(frameCount: 0, durationSeconds: 4.0), [])
+    }
+
+    func testScaledImageSizeMatchesFfmpegScale512Minus2() {
+        XCTAssertEqual(
+            AsdGgufContract.scaledImageSize(sourceWidth: 1920, sourceHeight: 1080),
+            AsdGgufScaledImageSize(width: 512, height: 288)
+        )
+        XCTAssertEqual(
+            AsdGgufContract.scaledImageSize(sourceWidth: 300, sourceHeight: 200),
+            AsdGgufScaledImageSize(width: 512, height: 342)
+        )
+        XCTAssertEqual(
+            AsdGgufContract.scaledImageSize(sourceWidth: 1000, sourceHeight: 333),
+            AsdGgufScaledImageSize(width: 512, height: 170)
+        )
+        XCTAssertEqual(
+            AsdGgufContract.scaledImageSize(sourceWidth: 333, sourceHeight: 1000),
+            AsdGgufScaledImageSize(width: 512, height: 1538)
+        )
+    }
+
+    func testASDDSFilenameDurationParsing() {
+        XCTAssertEqual(AsdGgufContract.asdDSClipDurationSeconds(fileStem: "6eS2CBMSZ4E_250_260"), 10)
+        XCTAssertEqual(AsdGgufContract.asdDSClipDurationSeconds(fileStem: "E-XgK_LaFKI_11_21"), 10)
+        XCTAssertNil(AsdGgufContract.asdDSClipDurationSeconds(fileStem: "user_video"))
+        XCTAssertNil(AsdGgufContract.asdDSClipDurationSeconds(fileStem: "clip_20_10"))
     }
 
     func testAudioDurationMatchesMacEval() {

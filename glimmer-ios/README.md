@@ -20,8 +20,8 @@
 
 抽帧、尺寸、prompt、解码参数严格复现 Mac/Linux GGUF 评估配置，详见仓库根目录的 [`docs/ios_gguf_code9_waudio_integration.md`](../docs/ios_gguf_code9_waudio_integration.md)：
 
-- 抽帧：`frame_count = max(1, min(32, ceil(时长秒)))`；时间戳对齐本地 eval 的 ffmpeg `fps` 采样（`t = i*dur/frame_count`，起点锚定、顺序、覆盖整段）；每帧宽 512、保持比例、RGB、JPEG q95。
-- 音频：单声道 16 kHz PCM WAV，最多 30 秒。
+- 抽帧：`frame_count = max(1, min(32, ceil(时长秒)))`；ASD-DS 文件优先使用文件名里的 `end-start` clip 时长；时间戳对齐本地 eval 的 ffmpeg `fps` 采样（`t = i*dur/frame_count`，起点锚定、顺序、覆盖整段）；每帧宽 512、保持比例、偶数高度、RGB、JPEG q95。
+- 音频：单声道 16 kHz PCM WAV，最多 30 秒，并裁剪/补零到精确 PCM sample 数。
 - 顺序：`frames → audio → text instruction`；每段片段**新建 conversation，无历史**。
 - system / user prompt 逐字使用 `prompts/zh` 中文原文（**不让模型吐 JSON**）。
 - 解码：确定性 `temperature=0 / topK=1 / topP=1`，并使用 GBNF grammar 约束正好 9 位。
@@ -32,6 +32,7 @@
 - ✅ SwiftPM core contract 测试通过：parser、B10 派生、prompt/media 顺序、采样参数、中文 prompt。
 - ✅ iOS package simulator/device triple build 通过：`GlimmerCore` + `AsdGgufNative` + `GlimmerIOS`。
 - ✅ 已生成 `ios/Vendor/llama.xcframework`，包含 `libllama`、`ggml`、`ggml-metal`、`ggml-blas`、`mtmd`。
+- ✅ 已加真机 parity runner：可分别测试预构建 media 目录推理，以及 raw video → iOS preprocessing 的诊断输出。
 - ⚠️ 真机运行前需要把两个 GGUF 权重复制成 `ios/Model/` 下的真实文件；下载权重流程后续再做。
 
 ## 目录
@@ -43,6 +44,8 @@
   - `Sources/GlimmerIOS/ScreeningService.swift` — GGUF 权重定位、system prompt、9 位码解析
   - `Sources/GlimmerIOS/AsdGgufRunner.swift` — Swift runner，串行后台调用 native bridge
   - `Sources/GlimmerIOS/VideoAudioPreprocessor.swift` — 抽帧 + 音频提取（按 GGUF eval 规范）
+  - `Sources/GlimmerIOS/ParityTestRunner.swift` — 预构建 media 目录的真机推理 parity runner
+  - `Sources/GlimmerIOS/PreprocessParityRunner.swift` — raw video 真机预处理诊断 runner
   - `Sources/AsdGgufNative/` — Objective-C++ bridge，直接调用 llama.cpp / mtmd / grammar sampler
   - `Sources/GlimmerIOS/ReportView.swift` — B01–B10 严格校验 + 报告渲染
   - `Vendor/` — `llama.xcframework`

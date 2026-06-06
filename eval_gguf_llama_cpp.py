@@ -34,6 +34,7 @@ DEFAULT_MODEL_FILE = DEFAULT_EXPERIMENT_DIR / "model-Q4_K_M.gguf"
 DEFAULT_MMPROJ_FILE = DEFAULT_EXPERIMENT_DIR / "mmproj-bf16.gguf"
 DEFAULT_OUTPUT_DIR = DEFAULT_EXPERIMENT_DIR / "generated_metrics"
 DEFAULT_MEDIA_CACHE_DIR = DEFAULT_EXPERIMENT_DIR / "media_cache"
+DEFAULT_MEDIA_MARKER = "<__media__>"
 
 CODE9_GRAMMAR = r'''
 root ::= bit bit bit bit bit bit bit bit bit
@@ -74,6 +75,12 @@ bit ::= "0" | "1"
 @click.option("--top-p", default=1.0, show_default=True, type=click.FloatRange(min=0.0, max=1.0))
 @click.option("--top-k", default=1, show_default=True, type=click.IntRange(min=0))
 @click.option("--constrain-code/--no-constrain-code", default=True, show_default=True)
+@click.option(
+    "--media-marker",
+    default=DEFAULT_MEDIA_MARKER,
+    show_default=True,
+    help="Pin llama-server LLAMA_MEDIA_MARKER for reproducible mtmd prompts.",
+)
 @click.option("--server-start-timeout", default=900, show_default=True, type=click.IntRange(min=30))
 @click.option("--request-timeout", default=900, show_default=True, type=click.IntRange(min=30))
 @click.option("--keep-server/--stop-server", default=False, show_default=True)
@@ -111,6 +118,7 @@ def main(
     top_p: float,
     top_k: int,
     constrain_code: bool,
+    media_marker: str,
     server_start_timeout: int,
     request_timeout: int,
     keep_server: bool,
@@ -118,6 +126,8 @@ def main(
     llama_server_bin = llama_server_bin.expanduser()
     model_file = model_file.expanduser()
     mmproj_file = mmproj_file.expanduser()
+    if not media_marker:
+        raise click.ClickException("--media-marker must not be empty.")
     for path, label in (
         (llama_server_bin, "--llama-server-bin"),
         (model_file, "--model-file"),
@@ -161,12 +171,14 @@ def main(
     click.echo(f"use_audio: {use_audio}")
     click.echo(f"max_frames: {max_frames}")
     click.echo(f"constrain_code: {constrain_code}")
+    click.echo(f"media_marker: {media_marker}")
     click.echo(f"output_dir: {output_dir}")
 
     server_process: subprocess.Popen[str] | None = None
     server_log_handle = None
     if is_server_ready(host=host, port=port, timeout=1.0):
         click.echo(f"Using existing llama-server at http://{host}:{port}")
+        validate_server_media_marker(host=host, port=port, expected_marker=media_marker)
     else:
         server_log_handle = server_log_path.open("w", encoding="utf-8")
         server_process = start_server(
@@ -183,9 +195,11 @@ def main(
             device=device,
             gpu_layers=gpu_layers,
             mmproj_offload=mmproj_offload,
+            media_marker=media_marker,
             log_handle=server_log_handle,
         )
         wait_for_server(host=host, port=port, process=server_process, timeout=server_start_timeout, log_path=server_log_path)
+        validate_server_media_marker(host=host, port=port, expected_marker=media_marker)
 
     ffmpeg = find_tool("ffmpeg")
     records: list[dict[str, Any]] = []
@@ -295,6 +309,7 @@ def main(
             "top_p": top_p,
             "top_k": top_k,
             "constrain_code": constrain_code,
+            "media_marker": media_marker,
             "grammar": CODE9_GRAMMAR if constrain_code else None,
         }
         metrics["artifacts"] = {
@@ -352,6 +367,7 @@ def start_server(
     device: str | None,
     gpu_layers: str | None,
     mmproj_offload: bool,
+    media_marker: str,
     log_handle: Any,
 ) -> subprocess.Popen[str]:
     command = [
@@ -372,6 +388,9 @@ def start_server(
         str(threads_batch),
         "--parallel",
         str(parallel),
+        "--cache-ram",
+        "0",
+        "--no-cache-prompt",
         "--no-ui",
         "--jinja",
         "--chat-template-kwargs",
@@ -391,6 +410,7 @@ def start_server(
     command.append("--mmproj-offload" if mmproj_offload else "--no-mmproj-offload")
     env = os.environ.copy()
     env["LLAMA_ARG_FLASH_ATTN"] = "off"
+    env["LLAMA_MEDIA_MARKER"] = media_marker
     if cuda_visible_devices:
         env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
     process = subprocess.Popen(
@@ -426,6 +446,23 @@ def is_server_ready(*, host: str, port: int, timeout: float) -> bool:
             return int(response.status) == 200
     except Exception:
         return False
+
+
+def validate_server_media_marker(*, host: str, port: int, expected_marker: str) -> None:
+    request = urllib.request.Request(f"http://{host}:{port}/props")
+    try:
+        with urllib.request.urlopen(request, timeout=10.0) as response:
+            props = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise click.ClickException(f"Failed to read llama-server /props for media marker validation: {exc}") from exc
+
+    actual_marker = str(props.get("media_marker", ""))
+    if actual_marker != expected_marker:
+        raise click.ClickException(
+            "Existing llama-server media marker mismatch: "
+            f"expected {expected_marker!r}, got {actual_marker!r}. "
+            "Restart the server or pass --media-marker to match it."
+        )
 
 
 def send_chat_completion(
@@ -483,6 +520,7 @@ def send_chat_completion(
         "typical_p": 1.0,
         "repeat_penalty": 1.0,
         "seed": 42,
+        "cache_prompt": False,
         "chat_template_kwargs": {"enable_thinking": False},
         "reasoning_format": "none",
     }
