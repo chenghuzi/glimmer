@@ -17,6 +17,18 @@ FOUNDATION_EXPORT NSString * const ASDGgufNativeRunnerErrorDomain;
                                      mediaPaths:(NSArray<NSString *> *)mediaPaths
                                           error:(NSError **)error;
 
+- (BOOL)beginExplanationSessionWithSystemPrompt:(NSString *)systemPrompt
+                                     userPrompt:(NSString *)userPrompt
+                               assistantContext:(NSString *)assistantContext
+                                     mediaPaths:(NSArray<NSString *> *)mediaPaths
+                                          error:(NSError **)error;
+
+- (nullable NSString *)sendExplanationUserMessage:(NSString *)message
+                                  maxOutputTokens:(NSInteger)maxOutputTokens
+                                            error:(NSError **)error;
+
+- (void)invalidateExplanationSession;
+
 @end
 
 NS_ASSUME_NONNULL_END

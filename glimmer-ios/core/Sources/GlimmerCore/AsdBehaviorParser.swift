@@ -1,9 +1,39 @@
 import Foundation
 
+public struct AsdBehaviorLabel: Equatable, Identifiable, Sendable {
+    public let id: String
+    public let name: String
+    public let isTargetBehavior: Bool
+
+    public init(id: String, name: String, isTargetBehavior: Bool) {
+        self.id = id
+        self.name = name
+        self.isTargetBehavior = isTargetBehavior
+    }
+}
+
 public struct AsdBehaviorReport: Equatable, Sendable {
     public let labelCode: String
     public let features: [String: Bool]
     public let overall: String
+
+    public var detectedLabels: [AsdBehaviorLabel] {
+        AsdBehaviorParser.labels.filter { label in
+            label.isTargetBehavior && features[label.id] == true
+        }
+    }
+
+    public var conclusionTitle: String {
+        detectedLabels.isEmpty ? "未观察到明显目标行为特征" : "观察到 \(detectedLabels.count) 项可关注的行为特征"
+    }
+
+    public var conclusionText: String {
+        let names = detectedLabels.map(\.name)
+        guard !names.isEmpty else {
+            return "本次片段未观察到 B01 到 B09 的明显目标行为特征。B10 由应用端根据前 9 项全为 false 自动派生。"
+        }
+        return "本次片段中观察到的可关注行为特征包括：\(names.joined(separator: "、"))。这些结果只表示片段中的可观察行为线索，不构成诊断。"
+    }
 
     public var jsonString: String {
         let featureJSON = AsdBehaviorParser.featureIDs
@@ -17,6 +47,18 @@ public struct AsdBehaviorReport: Equatable, Sendable {
 
 public enum AsdBehaviorParser {
     public static let featureIDs = ["B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B09", "B10"]
+    public static let labels: [AsdBehaviorLabel] = [
+        AsdBehaviorLabel(id: "B01", name: "缺乏或回避眼神接触", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B02", name: "攻击行为", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B03", name: "对感觉输入反应过度或不足", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B04", name: "对言语互动缺乏回应", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B05", name: "非典型语言", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B06", name: "物体排列", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B07", name: "自我击打或自伤行为", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B08", name: "自我旋转或旋转物体", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B09", name: "上肢刻板动作", isTargetBehavior: true),
+        AsdBehaviorLabel(id: "B10", name: "背景（无明显目标行为）", isTargetBehavior: false),
+    ]
 
     public static func parse(_ raw: String) -> AsdBehaviorReport? {
         let code = raw.trimmingCharacters(in: .whitespacesAndNewlines)

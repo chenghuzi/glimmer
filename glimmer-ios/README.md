@@ -12,6 +12,7 @@
 | 模型 | `model-Q4_K_M.gguf` + `mmproj-bf16.gguf`（主模型 + 多模态 projector，合计约 5.9GB，不入库） |
 | 输入 | 视频抽帧（最多 32 帧）→ 音频 WAV（最多 30 秒）→ 中文文字指令 |
 | 输出 | 模型只产出 **B01–B09 的 9 位二进制码**（`^[01]{9}$`）；最终 JSON（含 B10）由 **app 端拼装**后渲染为中文报告 |
+| 解释对话 | 报告完成后新建一个包含同一批 frames/audio 的 explanation conversation；后续用户只追加文本问题 |
 | 设备 | iPhone 真机优先使用 Metal；模拟器/本机编译路径用于集成验证 |
 
 > 当前不再走旧的 `.litertlm` 路径。旧文件如果还在 `ios/Model/`，不会被当前 `project.yml` 和 `ScreeningService` 引用。
@@ -22,16 +23,18 @@
 
 - 抽帧：`frame_count = max(1, min(32, ceil(时长秒)))`；ASD-DS 文件优先使用文件名里的 `end-start` clip 时长；时间戳对齐本地 eval 的 ffmpeg `fps` 采样（`t = i*dur/frame_count`，起点锚定、顺序、覆盖整段）；每帧宽 512、保持比例、偶数高度、RGB、JPEG q95。
 - 音频：单声道 16 kHz PCM WAV，最多 30 秒，并裁剪/补零到精确 PCM sample 数。
-- 顺序：`frames → audio → text instruction`；每段片段**新建 conversation，无历史**。
+- 分类顺序：`frames → audio → text instruction`；每段片段**新建 classification conversation，无历史**。
 - system / user prompt 逐字使用 `prompts/zh` 中文原文（**不让模型吐 JSON**）。
 - 解码：确定性 `temperature=0 / topK=1 / topP=1`，并使用 GBNF grammar 约束正好 9 位。
 - 输出：模型回 **9 位二进制码**，端上 `^[01]{9}$` 严格校验 → 拼装 JSON（`B10 = (B01..B09 全 false)`），非法码拦截。
+- 解释对话：识别完成后另起一个 **explanation conversation**，初始上下文包含同一批 `frames → audio`、解释 prompt、9-bit code 和 app 解析后的 B01–B10 结果；之后只追加文本问题，不再提供附件入口。
 
 ## 状态
 
 - ✅ SwiftPM core contract 测试通过：parser、B10 派生、prompt/media 顺序、采样参数、中文 prompt。
 - ✅ iOS package simulator/device triple build 通过：`GlimmerCore` + `AsdGgufNative` + `GlimmerIOS`。
 - ✅ 已生成 `ios/Vendor/llama.xcframework`，包含 `libllama`、`ggml`、`ggml-metal`、`ggml-blas`、`mtmd`。
+- ✅ 报告页已支持本地解释对话：新建 multimodal explanation session，后续文本追问复用同一 session/KV cache。
 - ✅ 已加真机 parity runner：可分别测试预构建 media 目录推理，以及 raw video → iOS preprocessing 的诊断输出。
 - ⚠️ 真机运行前需要把两个 GGUF 权重复制成 `ios/Model/` 下的真实文件；下载权重流程后续再做。
 
@@ -41,9 +44,10 @@
 - `ios/` — 端侧 SwiftUI app（GGUF）
   - `Package.swift` — SwiftPM package，管理 `GlimmerIOS`、`AsdGgufNative` 和 `llama.xcframework`
   - `App/` — 极薄 iOS app host，只负责 app entrypoint、Info.plist、entitlements、bundle/signing
-  - `Sources/GlimmerIOS/ScreeningService.swift` — GGUF 权重定位、system prompt、9 位码解析
+  - `Sources/GlimmerIOS/ScreeningService.swift` — GGUF 权重定位、system prompt、9 位码解析、解释对话状态
   - `Sources/GlimmerIOS/AsdGgufRunner.swift` — Swift runner，串行后台调用 native bridge
   - `Sources/GlimmerIOS/VideoAudioPreprocessor.swift` — 抽帧 + 音频提取（按 GGUF eval 规范）
+  - `Sources/GlimmerIOS/ReportHeaderView.swift` / `ExplanationChatView.swift` — 报告详情与本地文本对话 UI
   - `Sources/GlimmerIOS/ParityTestRunner.swift` — 预构建 media 目录的真机推理 parity runner
   - `Sources/GlimmerIOS/PreprocessParityRunner.swift` — raw video 真机预处理诊断 runner
   - `Sources/AsdGgufNative/` — Objective-C++ bridge，直接调用 llama.cpp / mtmd / grammar sampler
