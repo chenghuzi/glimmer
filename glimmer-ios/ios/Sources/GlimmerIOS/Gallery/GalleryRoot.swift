@@ -29,6 +29,13 @@ public struct GalleryRoot: View {
         case "analyzing":    AnalyzingDemoContainer()
         case "report":       placeholder("report 未实现")
         case "qa":           placeholder("qa 未实现")
+        case "analyze":
+            // 真推理直测：把随包测试视频直接喂给 AnalysisFlowView，跳过 picker
+            if let url = Bundle.main.url(forResource: "test_clip", withExtension: "mov") {
+                AnalysisFlowView(videoURL: url)
+            } else {
+                placeholder("缺 test_clip.mov")
+            }
         default:             placeholder("未知屏: \(screen)")
         }
     }
