@@ -5,5 +5,9 @@ public struct GlimmerRootView: View {
 
     public var body: some View {
         ContentView()
+            .task {
+                await ParityTestRunner.runIfConfigured()
+                await PreprocessParityRunner.runIfConfigured()
+            }
     }
 }

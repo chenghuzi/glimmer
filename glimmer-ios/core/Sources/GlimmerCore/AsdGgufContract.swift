@@ -1,5 +1,15 @@
 import Foundation
 
+public struct AsdGgufScaledImageSize: Equatable, Sendable {
+    public let width: Int
+    public let height: Int
+
+    public init(width: Int, height: Int) {
+        self.width = width
+        self.height = height
+    }
+}
+
 public enum AsdGgufContract {
     public static let promptLanguage = "zh"
     public static let contextSize = 8192
@@ -37,6 +47,37 @@ public enum AsdGgufContract {
     public static func sampleTime(frameIndex: Int, frameCount: Int, durationSeconds: Double) -> Double {
         guard frameCount > 0, durationSeconds > 0 else { return 0 }
         return Double(frameIndex) * durationSeconds / Double(frameCount)
+    }
+
+    public static func sampleTimes(frameCount: Int, durationSeconds: Double) -> [Double] {
+        guard frameCount > 0 else { return [] }
+        return (0..<frameCount).map { sampleTime(frameIndex: $0, frameCount: frameCount, durationSeconds: durationSeconds) }
+    }
+
+    public static func asdDSClipDurationSeconds(fileStem: String) -> Double? {
+        let parts = fileStem.split(separator: "_")
+        guard parts.count >= 3,
+              let start = Int(parts[parts.count - 2]),
+              let end = Int(parts[parts.count - 1]),
+              end > start else {
+            return nil
+        }
+        return Double(end - start)
+    }
+
+    public static func scaledImageSize(
+        sourceWidth: Int,
+        sourceHeight: Int,
+        targetWidth: Int = imageWidth
+    ) -> AsdGgufScaledImageSize {
+        let safeTargetWidth = max(1, targetWidth)
+        guard sourceWidth > 0, sourceHeight > 0 else {
+            return AsdGgufScaledImageSize(width: safeTargetWidth, height: safeTargetWidth)
+        }
+
+        let rawHeight = Double(sourceHeight) * Double(safeTargetWidth) / Double(sourceWidth)
+        let evenHeight = max(2, Int((rawHeight / 2.0).rounded()) * 2)
+        return AsdGgufScaledImageSize(width: safeTargetWidth, height: evenHeight)
     }
 
     public static func audioClipDuration(durationSeconds: Double) -> Double {
