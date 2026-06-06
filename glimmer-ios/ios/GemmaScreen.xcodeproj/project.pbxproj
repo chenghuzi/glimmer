@@ -14,6 +14,7 @@
 		2ED00D40178DB4E4CBB85750 /* tab_analyze.png in Resources */ = {isa = PBXBuildFile; fileRef = F50E5FF23032146E3A292AD6 /* tab_analyze.png */; };
 		337627828D4C4D4DFAD068B9 /* star_splash.png in Resources */ = {isa = PBXBuildFile; fileRef = 064EEA933D0BD0289350339A /* star_splash.png */; };
 		3CC7C6B5AF84B8D5EAACC325 /* GlimmerGalleryApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E543F4878CF2171E0F6227A6 /* GlimmerGalleryApp.swift */; };
+		3DD2EDF851AE10066B011469 /* mmproj-bf16.gguf in Resources */ = {isa = PBXBuildFile; fileRef = 1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */; };
 		3FA653710877C76EB3835E9E /* star_peek.png in Resources */ = {isa = PBXBuildFile; fileRef = C35ECF0F26AFD4E596376922 /* star_peek.png */; };
 		41C9E98F74C555BB594028BB /* GlimmerIOS in Frameworks */ = {isa = PBXBuildFile; productRef = 6978095DF4877832B6B17915 /* GlimmerIOS */; };
 		484A01B7FDDEA11C83037D8E /* sample_pos.jpg in Resources */ = {isa = PBXBuildFile; fileRef = E9B954A2566A00FE2757E870 /* sample_pos.jpg */; };
@@ -26,6 +27,7 @@
 		824AF9D8AB67861A91F6B9B4 /* mmproj-bf16.gguf in Resources */ = {isa = PBXBuildFile; fileRef = 1EDBAD964B4B84A97B71E8C2 /* mmproj-bf16.gguf */; };
 		82702FE9D1786C6A5755D8A3 /* icon_ai_small.png in Resources */ = {isa = PBXBuildFile; fileRef = 9396676C1D70309187F7B3B8 /* icon_ai_small.png */; };
 		8496FA155CAAF2DFF67C2CEF /* GlimmerIOS in Frameworks */ = {isa = PBXBuildFile; productRef = A6EB668DD5DD39CE5114C3AA /* GlimmerIOS */; };
+		89B4898C8495042EE10F9014 /* model-Q4_K_M.gguf in Resources */ = {isa = PBXBuildFile; fileRef = 24A64C1E7E2435E60BA79368 /* model-Q4_K_M.gguf */; };
 		96FA8C7C5CD1A7232B5512D4 /* star_knob.png in Resources */ = {isa = PBXBuildFile; fileRef = 80DB9C005589768339E7D5B7 /* star_knob.png */; };
 		A79C0CAA6120275C177EC8B9 /* star_peek.png in Resources */ = {isa = PBXBuildFile; fileRef = C35ECF0F26AFD4E596376922 /* star_peek.png */; };
 		A7F0F0C795BDA285FD6F7343 /* light_beam.png in Resources */ = {isa = PBXBuildFile; fileRef = A2ED7CCDE95191949FDD446A /* light_beam.png */; };
@@ -300,6 +302,8 @@
 				FDA3DB1B43BACDD4A14C1868 /* icon_menu.png in Resources */,
 				7A43840627DEE10379D4A41B /* icon_play.png in Resources */,
 				F4EB7B2209ED64CDFAACA2EF /* light_beam.png in Resources */,
+				3DD2EDF851AE10066B011469 /* mmproj-bf16.gguf in Resources */,
+				89B4898C8495042EE10F9014 /* model-Q4_K_M.gguf in Resources */,
 				B67A68B827E602D1A3F71F7E /* phone.png in Resources */,
 				5742BAC182CC49572C7F4FEA /* phone_rec.png in Resources */,
 				4FA78C29074F5FCC0BBCF182 /* sample_neg.jpg in Resources */,

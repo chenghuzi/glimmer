@@ -79,6 +79,11 @@ targets:
     sources:
       - Gallery
       - Resources
+      # 真机测试需随包模型（与主 App 同两份 GGUF），bundled 后不触发联网下载
+      - path: Model/model-Q4_K_M.gguf
+        buildPhase: resources
+      - path: Model/mmproj-bf16.gguf
+        buildPhase: resources
     dependencies:
       - package: GlimmerIOS
         product: GlimmerIOS
