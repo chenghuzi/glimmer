@@ -46,7 +46,8 @@ targets:
               exit 1
             fi
             if [ -L "${path}" ]; then
-              echo "Bundled GGUF model must be a real file, not a symlink: ${path}" >&2
+              echo "Bundled GGUF model must be a real file, not a symlink:" \
+                "${path}" >&2
               echo "Run: ${SRCROOT}/Scripts/prepare-local-gguf-models.sh" >&2
               exit 1
             fi
@@ -62,13 +63,13 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: cn.youyou.gemmascreen
+        PRODUCT_BUNDLE_IDENTIFIER: ${GEMMASCREEN_PRODUCT_BUNDLE_IDENTIFIER}
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
-        DEVELOPMENT_TEAM: XN9XFCT4XH
+        DEVELOPMENT_TEAM: ${GEMMASCREEN_DEVELOPMENT_TEAM}
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: App/GemmaScreen.entitlements
         OTHER_LDFLAGS: -all_load
@@ -99,14 +100,14 @@ targets:
         ITSAppUsesNonExemptEncryption: false
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: cn.youyou.glimmergallery
+        PRODUCT_BUNDLE_IDENTIFIER: ${GLIMMER_GALLERY_PRODUCT_BUNDLE_IDENTIFIER}
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
         CODE_SIGN_STYLE: Automatic
-        DEVELOPMENT_TEAM: XN9XFCT4XH
+        DEVELOPMENT_TEAM: ${GLIMMER_GALLERY_DEVELOPMENT_TEAM}
         OTHER_LDFLAGS: -all_load
 schemes:
   GemmaScreen:
