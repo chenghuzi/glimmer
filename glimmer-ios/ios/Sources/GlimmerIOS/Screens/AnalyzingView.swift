@@ -201,8 +201,20 @@ struct AnalyzingDemoContainer: View {
     @State private var partial = ""
     @State private var streamDone = false
     @State private var showReport = false
+    /// Gallery 无模型 → 用假 chat 数据演示报告页交互。
+    @State private var demoMessages: [ExplanationChatMessage] = []
+    @State private var demoResponding = false
     /// 假 9 位 code（mock：观察到几项关注行为）。
     private let demoCode = "101100010"
+
+    /// 从 demoCode 模板化结论（与真实 AsdBehaviorReport.conclusionText 同款措辞）。
+    private var demoConclusion: String {
+        let names = zip(AnalyzingView.featureNames, demoCode)
+            .filter { $0.1 == "1" }
+            .map(\.0)
+        guard !names.isEmpty else { return "本次片段未观察到明显目标行为特征。" }
+        return "本次片段中观察到的可关注行为特征包括：\(names.joined(separator: "、"))。这些结果只表示片段中的可观察行为线索，不构成诊断。"
+    }
 
     var body: some View {
         ZStack {
@@ -210,7 +222,11 @@ struct AnalyzingDemoContainer: View {
                 ReportConversationView(
                     timestamp: "2026-06-03 12:12:12",
                     videoDuration: "00:23",
-                    fullConclusion: MockReport.sample.conclusion,
+                    conclusion: demoConclusion,
+                    messages: demoMessages,
+                    isChatReady: true,
+                    isResponding: demoResponding,
+                    onSend: { text in demoReply(to: text) },
                     onBack: { showReport = false }
                 )
             } else {
@@ -230,6 +246,20 @@ struct AnalyzingDemoContainer: View {
                 partial.append(ch)
             }
             streamDone = true
+        }
+    }
+
+    /// Gallery 假回复：echo 用户问题后给一句固定演示回答。
+    private func demoReply(to text: String) {
+        demoMessages.append(ExplanationChatMessage(role: .user, text: text))
+        demoResponding = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(900))
+            demoResponding = false
+            demoMessages.append(ExplanationChatMessage(
+                role: .assistant,
+                text: "视频里孩子反复把罐头叠高、排列，这类重复摆弄物品的动作是筛查里关注的线索之一。单段视频不一定很明显，建议结合更多日常场景观察。"
+            ))
         }
     }
 }

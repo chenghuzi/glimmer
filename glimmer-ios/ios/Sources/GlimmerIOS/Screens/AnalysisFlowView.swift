@@ -1,72 +1,97 @@
 import SwiftUI
 import AVFoundation
 
-/// 视频选好后的分析流程：预处理 → 流式推理（SSE） → 报告。
-/// 走真实 ScreeningService.analyzeStream，AnalyzingView 订阅 service.output 增量重渲染。
+/// 视频选好后的分析流程：预处理 → 9 位 code 分类（真实推理）→ 报告 + 本地解释对话。
+///
+/// 推理用 chenghuzi 的 `ScreeningService`：
+/// - `analyze` 出 9 位 code → `report`（结论模板化，零幻觉）
+/// - `beginExplanationChat` 把视频帧/音频 + 结果喂进 KV-cache，开本地多轮对话
+/// AnalyzingView 的逐项揭示动画是 UI 自走节奏（与模型 token 速度无关），
+/// 等模型出 code（streamFinished）且动画跑完，再切报告页。
 struct AnalysisFlowView: View {
     let videoURL: URL
 
     @Environment(\.dismiss) private var dismiss
     @State private var service = ScreeningService()
     @State private var started = false
-    /// 模型流式完成（9 位 code 收齐）。UI 动画跑完才切到报告页。
-    @State private var streamFinished = false
     @State private var showReport = false
     @State private var videoDuration: String = "00:00"
+    /// 预处理产物留存，供报告页开启解释对话时复用。
+    @State private var media: PreparedGgufMedia?
 
-    /// 当前时间戳标签（mock 用 now；真实可挂到视频元数据）
     private let timestamp: String = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return f.string(from: Date())
     }()
 
+    /// 模型分类完成 = report 已解析出来（或出错文案已就绪）。
+    private var streamFinished: Bool { service.report != nil || !service.output.isEmpty }
+
     var body: some View {
         ZStack {
             if showReport {
-                // 视觉壳阶段：固定用 mock 报告散文；对话区初始为空，由用户输入驱动
                 ReportConversationView(
                     timestamp: timestamp,
                     videoDuration: videoDuration,
-                    fullConclusion: MockReport.sample.conclusion,
+                    conclusion: service.report?.conclusionText ?? service.output,
+                    messages: service.chatMessages,
+                    isChatReady: service.isChatReady,
+                    isResponding: service.isChatResponding,
+                    onSend: { text in Task { await service.sendChatMessage(text) } },
                     onBack: { dismiss() }
                 )
             } else {
                 AnalyzingView(
                     timestamp: timestamp,
-                    partialCode: service.output,
+                    partialCode: service.report?.labelCode ?? "",
                     onBack: { dismiss() },
                     streamFinished: streamFinished,
-                    onAnimationDone: { showReport = true }
+                    onAnimationDone: {
+                        showReport = true
+                        Task { await startChat() }
+                    }
                 )
             }
         }
         .task {
             guard !started else { return }
             started = true
-            // 异步读真实视频时长（与分析并行）
             Task { videoDuration = await Self.readDuration(videoURL) }
             await run()
         }
     }
 
     private func run() async {
-        let media = await VideoAudioPreprocessor.prepare(videoURL: videoURL)
-        guard !media.frameURLs.isEmpty else {
+        let prepared = await VideoAudioPreprocessor.prepare(videoURL: videoURL)
+        media = prepared
+        guard !prepared.frameURLs.isEmpty else {
             service.output = "无法从视频中提取画面，请换一段视频重试。"
-            streamFinished = true
             return
         }
         do {
-            try await service.analyzeStream(
-                frameURLs: media.frameURLs,
-                audioURL: media.audioURL,
+            try await service.analyze(
+                frameURLs: prepared.frameURLs,
+                audioURL: prepared.audioURL,
                 instruction: ScreeningService.userInstruction
             )
         } catch {
             service.output = "出错：\(error.localizedDescription)"
         }
-        streamFinished = true
+    }
+
+    /// 进报告页后，把同一段媒体 + 筛查结果灌进模型，开启本地解释对话。
+    private func startChat() async {
+        guard let media, service.report != nil, !service.isChatReady else { return }
+        do {
+            try await service.beginExplanationChat(
+                frameURLs: media.frameURLs,
+                audioURL: media.audioURL
+            )
+        } catch {
+            // 对话开启失败不阻塞报告展示，仅留出错状态
+            service.chatError = "本地对话初始化失败：\(error.localizedDescription)"
+        }
     }
 
     /// 读视频文件真实时长（秒）→ "MM:SS"。读失败回退 "00:00"。
@@ -81,4 +106,3 @@ struct AnalysisFlowView: View {
         }
     }
 }
-
