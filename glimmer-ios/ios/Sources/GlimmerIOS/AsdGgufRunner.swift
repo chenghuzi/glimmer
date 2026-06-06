@@ -32,6 +32,9 @@ final class AsdGgufRunner {
     private var nativeRunner: ASDGgufNativeRunner?
     private let inferenceQueue = DispatchQueue(label: "com.glimmer.asd.gguf.inference", qos: .userInitiated)
 
+    /// 当前 mmproj 是否支持音频（纯视觉投影器为 false）。加载后才有效。
+    var supportsAudio: Bool { nativeRunner?.supportsAudio ?? false }
+
     func load(modelFiles: AsdGgufModelFiles) async throws {
         guard FileManager.default.fileExists(atPath: modelFiles.modelURL.path) else {
             throw AsdGgufRunnerError.missingModel

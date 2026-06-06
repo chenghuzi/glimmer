@@ -50,9 +50,10 @@ final class ScreeningService {
         await runner.invalidateExplanationSession()
         defer { isRunning = false }
 
+        // 纯视觉投影器不支持音频 → 跳过音频，避免 marker 数与媒体数不匹配
         let request = AsdGgufRequestBuilder.build(
             frameURLs: frameURLs,
-            audioURL: audioURL,
+            audioURL: runner.supportsAudio ? audioURL : nil,
             userPrompt: instruction
         )
         let code = try await runner.generate(systemPrompt: AsdGgufPrompts.system, request: request)
@@ -77,7 +78,7 @@ final class ScreeningService {
 
         let request = AsdGgufRequestBuilder.build(
             frameURLs: frameURLs,
-            audioURL: audioURL,
+            audioURL: runner.supportsAudio ? audioURL : nil,
             userPrompt: AsdExplanationPrompts.userInstruction
         )
         try await runner.beginExplanationSession(
