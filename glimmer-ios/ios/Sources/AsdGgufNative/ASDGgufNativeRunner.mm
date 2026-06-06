@@ -63,9 +63,22 @@ std::string ToString(NSString * value) {
 }
 
 NSString * ToNSString(const std::string & value) {
-    return [[NSString alloc] initWithBytes:value.data()
-                                    length:value.size()
-                                  encoding:NSUTF8StringEncoding];
+    if (value.empty()) {
+        return @"";
+    }
+    // 生成在 maxTokens / turn-boundary 处被截断时，末尾可能是半个多字节
+    // UTF-8 字符（中文回复尤其常见），initWithBytes:UTF8 会直接返回 nil。
+    // 逐步丢弃末尾最多 3 个字节凑成合法 UTF-8，保证永不返回 nil。
+    const size_t length = value.size();
+    for (size_t drop = 0; drop <= 3 && drop <= length; drop += 1) {
+        NSString * string = [[NSString alloc] initWithBytes:value.data()
+                                                     length:length - drop
+                                                   encoding:NSUTF8StringEncoding];
+        if (string != nil) {
+            return string;
+        }
+    }
+    return @"";
 }
 
 std::string Trim(std::string value) {

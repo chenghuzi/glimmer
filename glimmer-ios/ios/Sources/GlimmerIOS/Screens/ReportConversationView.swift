@@ -21,6 +21,18 @@ struct ReportConversationView: View {
     @State private var revealedCount: Int = 0
     private let charInterval: Duration = .milliseconds(30)
     @State private var draft: String = ""
+    @FocusState private var inputFocused: Bool
+
+    // 追问回复也按 SSE 节奏逐字揭示（与结论一致），18ms/字符；
+    // 只揭示「刚到达的那条」助手消息，更早的消息保持完整。
+    @State private var chatStreamID: UUID?
+    @State private var chatStreamCount: Int = 0
+    private let chatCharInterval: Duration = .milliseconds(18)
+
+    private func revealedChatText(for msg: ExplanationChatMessage) -> String {
+        guard msg.id == chatStreamID else { return msg.text }
+        return String(msg.text.prefix(min(chatStreamCount, msg.text.count)))
+    }
 
     private var revealedConclusion: String {
         let chars = Array(conclusion)
@@ -43,7 +55,7 @@ struct ReportConversationView: View {
                         ForEach(messages) { msg in
                             switch msg.role {
                             case .user:      userBubble(msg.text)
-                            case .assistant: assistantText(msg.text, isError: msg.isError)
+                            case .assistant: assistantText(revealedChatText(for: msg), isError: msg.isError)
                             }
                         }
                         if isResponding { typingIndicator }
@@ -54,6 +66,10 @@ struct ReportConversationView: View {
                 }
                 .onChange(of: messages.count) { _, _ in scrollToBottom(proxy) }
                 .onChange(of: isResponding) { _, _ in scrollToBottom(proxy) }
+                // 逐字揭示时实时跟到底（不加动画，避免每 18ms 排队动画卡顿）
+                .onChange(of: chatStreamCount) { _, _ in proxy.scrollTo("__bottom__", anchor: .bottom) }
+                // 键盘弹起时滚到底，保证最新一条在输入框上方可见
+                .onChange(of: inputFocused) { _, f in if f { scrollToBottom(proxy) } }
             }
 
             // 顶部 nav（带不透明背景，遮住下方滚动内容，避免叠字）
@@ -66,17 +82,20 @@ struct ReportConversationView: View {
             }
 
             // 底部输入 + 提示 + Tab
+            // 不再 ignoresSafeArea(.keyboard)：键盘弹起时这组会被顶到键盘上方，
+            // 输入框可见。聚焦时隐藏脚注 + Tab，只留输入框贴在键盘上方。
             VStack(spacing: 4) {
                 Spacer()
                 chatInputBar
                     .padding(.horizontal, 16)
-                Text("分析与对话全程在设备本地完成")
-                    .font(.system(size: 12, weight: .light))
-                    .foregroundStyle(Color(hex: 0x666664))
-                GlimmerTabBar(active: .report)
+                if !inputFocused {
+                    Text("分析与对话全程在设备本地完成")
+                        .font(.system(size: 12, weight: .light))
+                        .foregroundStyle(Color(hex: 0x666664))
+                    GlimmerTabBar(active: .report)
+                }
             }
         }
-        .ignoresSafeArea(.keyboard)
         .task(id: conclusion) {
             revealedCount = 0
             let total = conclusion.count
@@ -84,6 +103,18 @@ struct ReportConversationView: View {
                 try? await Task.sleep(for: charInterval)
                 if Task.isCancelled { return }
                 revealedCount = min(revealedCount + 1, total)
+            }
+        }
+        // 追问回复逐字揭示：每当最新一条变为「助手非错误」消息就从头流式播放
+        .task(id: messages.last?.id) {
+            guard let last = messages.last, last.role == .assistant, !last.isError else { return }
+            chatStreamID = last.id
+            chatStreamCount = 0
+            let total = last.text.count
+            while chatStreamCount < total && !Task.isCancelled {
+                try? await Task.sleep(for: chatCharInterval)
+                if Task.isCancelled { return }
+                chatStreamCount = min(chatStreamCount + 1, total)
             }
         }
     }
@@ -174,12 +205,14 @@ struct ReportConversationView: View {
 
     private var chatInputBar: some View {
         HStack(spacing: 8) {
-            TextField(isChatReady ? "可以和我聊聊" : "正在准备本地对话…", text: $draft, axis: .vertical)
+            // 单行输入：回车即发送（onSubmit 仅对单行 TextField 触发；axis:.vertical 时回车=换行不触发）。
+            // 始终可聚焦/输入；能否发送由 canSend 门控（模型对话就绪前不发）。
+            TextField(isChatReady ? "可以和我聊聊" : "正在准备本地对话…", text: $draft)
                 .font(.system(size: 16, weight: .light))
                 .foregroundStyle(GTheme.ink)
                 .tint(Color(hex: 0xF8C304))
-                .lineLimit(1...3)
-                .disabled(!isChatReady)
+                .focused($inputFocused)
+                .submitLabel(.send)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
                 .onSubmit(submit)
