@@ -210,6 +210,9 @@ tempCodeRunnerFile.py
 # Local one-off automation scripts
 .local_scripts/
 
+# Local documentation drafts
+docs/
+
 # Ruff stuff:
 .ruff_cache/
 
