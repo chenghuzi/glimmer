@@ -13,13 +13,14 @@ enum ModelCatalog {
         var filename: String { resource + ".gguf" }
     }
 
-    // TODO: 替换为真实模型下载地址（CDN / 对象存储）。当前为占位地址，
-    // placeholder host 下 ModelDownloadManager 会走「模拟进度」以便联调 UI。
+    // chenghuzi 在 HF 上的微调模型 repo（modelscope 上传慢，先用 HF）：
+    //   https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf
+    // tags: gemma4, multimodal, behavior-screening, conversational → 支持自然语言
     static let items: [Item] = [
         Item(resource: "model-Q4_K_M",
-             remoteURL: URL(string: "https://models.example.com/glimmer/model-Q4_K_M.gguf")!),
+             remoteURL: URL(string: "https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf/resolve/main/model-Q4_K_M.gguf")!),
         Item(resource: "mmproj-bf16",
-             remoteURL: URL(string: "https://models.example.com/glimmer/mmproj-bf16.gguf")!),
+             remoteURL: URL(string: "https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf/resolve/main/mmproj-bf16.gguf")!),
     ]
 
     /// 占位地址（尚未配置真实 CDN）。
