@@ -1,5 +1,10 @@
 import Foundation
 
+enum ModelDownloadRegion: String, Codable, Equatable {
+    case china
+    case global
+}
+
 enum ModelDownloadError: LocalizedError {
     case invalidResponse
     case httpStatus(Int)
@@ -14,6 +19,104 @@ enum ModelDownloadError: LocalizedError {
         case .incompleteFile(let filename):
             return "Model download did not complete: \(filename)."
         }
+    }
+}
+
+private struct ModelDownloadRegionResolver {
+    private struct Cache: Codable {
+        let region: ModelDownloadRegion
+        let checkedAt: Date
+    }
+
+    private enum Constants {
+        static let cacheKey = "GlimmerModelDownloadRegion"
+        static let cacheTTL: TimeInterval = 24 * 60 * 60
+        static let timeout: TimeInterval = 8
+        static let endpoints = [
+            URL(string: "https://api.country.is/")!,
+            URL(string: "https://www.cloudflare.com/cdn-cgi/trace")!,
+            URL(string: "https://ipapi.co/country/")!
+        ]
+    }
+
+    func preferredRegion() async -> ModelDownloadRegion {
+        if let cached = cachedRegion(), Date().timeIntervalSince(cached.checkedAt) < Constants.cacheTTL {
+            return cached.region
+        }
+
+        for endpoint in Constants.endpoints {
+            if let region = await resolveRegion(from: endpoint) {
+                save(region)
+                return region
+            }
+        }
+
+        let fallback = Locale.current.region?.identifier.uppercased() == "CN"
+            ? ModelDownloadRegion.china
+            : ModelDownloadRegion.global
+        save(fallback)
+        return fallback
+    }
+
+    private func resolveRegion(from endpoint: URL) async -> ModelDownloadRegion? {
+        var request = URLRequest(url: endpoint)
+        request.timeoutInterval = Constants.timeout
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = Constants.timeout
+        configuration.timeoutIntervalForResource = Constants.timeout
+
+        do {
+            let (data, response) = try await URLSession(configuration: configuration).data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                return nil
+            }
+            let body = String(decoding: data, as: UTF8.self)
+            return parseRegion(body)
+        } catch {
+            return nil
+        }
+    }
+
+    private func parseRegion(_ body: String) -> ModelDownloadRegion? {
+        if let data = body.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let country = object["country"] as? String {
+            return region(countryCode: country)
+        }
+
+        for line in body.split(whereSeparator: \.isNewline) {
+            let value = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.count == 2 {
+                return region(countryCode: value)
+            }
+            if value.hasPrefix("loc=") {
+                return region(countryCode: String(value.dropFirst(4)))
+            }
+        }
+
+        return nil
+    }
+
+    private func region(countryCode: String) -> ModelDownloadRegion {
+        countryCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "CN"
+            ? .china
+            : .global
+    }
+
+    private func cachedRegion() -> Cache? {
+        guard let data = UserDefaults.standard.data(forKey: Constants.cacheKey) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(Cache.self, from: data)
+    }
+
+    private func save(_ region: ModelDownloadRegion) {
+        let cache = Cache(region: region, checkedAt: Date())
+        guard let data = try? JSONEncoder().encode(cache) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: Constants.cacheKey)
     }
 }
 
@@ -67,6 +170,7 @@ final class ModelDownloadManager {
         let items = ModelCatalog.items
         let totalBytes = max(items.reduce(Int64(0)) { $0 + $1.byteSize }, 1)
         var completedBytes: Int64 = 0
+        let region = await ModelDownloadRegionResolver().preferredRegion()
 
         for item in items {
             if try await ModelCatalog.validateExistingFileIfNeeded(item) {
@@ -76,29 +180,60 @@ final class ModelDownloadManager {
             }
 
             ModelCatalog.removeLocalFile(item)
-
-            let partialBytes = ModelCatalog.validPartialSize(item)
-            updateProgress(completedBytes: completedBytes + partialBytes, totalBytes: totalBytes)
-
-            if partialBytes == item.byteSize {
-                try ModelCatalog.installValidatedPartial(item)
-            } else {
-                try await download(item: item, completedBeforeItem: completedBytes, totalBytes: totalBytes)
-                try ModelCatalog.installValidatedPartial(item)
-            }
+            try await downloadAndInstall(
+                item: item,
+                sourceURLs: ModelCatalog.downloadURLs(for: item, region: region),
+                completedBeforeItem: completedBytes,
+                totalBytes: totalBytes
+            )
 
             completedBytes += item.byteSize
             updateProgress(completedBytes: completedBytes, totalBytes: totalBytes)
         }
     }
 
+    private func downloadAndInstall(
+        item: ModelCatalog.Item,
+        sourceURLs: [URL],
+        completedBeforeItem: Int64,
+        totalBytes: Int64
+    ) async throws {
+        var lastError: Error?
+
+        for sourceURL in sourceURLs {
+            do {
+                let partialBytes = ModelCatalog.validPartialSize(item)
+                updateProgress(completedBytes: completedBeforeItem + partialBytes, totalBytes: totalBytes)
+
+                if partialBytes != item.byteSize {
+                    try await download(
+                        item: item,
+                        sourceURL: sourceURL,
+                        completedBeforeItem: completedBeforeItem,
+                        totalBytes: totalBytes
+                    )
+                }
+
+                try ModelCatalog.installValidatedPartial(item, sourceURL: sourceURL)
+                return
+            } catch {
+                lastError = error
+                ModelCatalog.removePartialFile(item)
+                updateProgress(completedBytes: completedBeforeItem, totalBytes: totalBytes)
+            }
+        }
+
+        throw lastError ?? ModelDownloadError.invalidResponse
+    }
+
     private func download(
         item: ModelCatalog.Item,
+        sourceURL: URL,
         completedBeforeItem: Int64,
         totalBytes: Int64
     ) async throws {
         let downloader = ResumableFileDownloader(
-            remoteURL: item.url,
+            remoteURL: sourceURL,
             destinationURL: ModelCatalog.partialURL(item),
             expectedByteCount: item.byteSize
         ) { [weak self] currentBytes in
