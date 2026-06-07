@@ -245,6 +245,9 @@ private final class ResumableFileDownloader: NSObject, URLSessionDataDelegate {
             }
 
             let configuration = URLSessionConfiguration.default
+            // 网络栈未就绪时等待连接，而不是立刻抛 -1009（NSURLErrorNotConnectedToInternet）。
+            // 没有这行，App 刚启动/网络刚切换时首个请求常常秒报“offline”。
+            configuration.waitsForConnectivity = true
             configuration.timeoutIntervalForRequest = 60
             configuration.timeoutIntervalForResource = 60 * 60 * 12
 

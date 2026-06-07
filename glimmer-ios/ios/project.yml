@@ -4,6 +4,7 @@ options:
   bundleIdPrefix: cn.youyou
   deploymentTarget:
     iOS: "17.0"
+    macOS: "14.0"
 packages:
   GlimmerIOS:
     path: .
@@ -80,6 +81,66 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Gallery/GlimmerGallery.entitlements
         OTHER_LDFLAGS: -all_load
 
+  # 原生 macOS app：复用 GlimmerIOS 包，Metal 原生跑模型。非沙盒，便于本地运行/调试。
+  # 更新/常规版：不带模型(~20MB)。读 Application Support 里已播种的模型；没有则走下载。
+  GlimmerMac:
+    type: application
+    platform: macOS
+    sources:
+      - MacApp
+      - Resources
+    dependencies:
+      - package: GlimmerIOS
+        product: GlimmerIOS
+    info:
+      path: MacApp/Info.plist
+      properties:
+        CFBundleDisplayName: 微光 Glimmer
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cn.youyou.glimmermac
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        # 仅 Apple Silicon：llama macOS 切片是 arm64-only，避免 Release 编通用二进制时 x86_64 链接失败
+        ARCHS: arm64
+        SUPPORTED_PLATFORMS: "macosx"
+        DEVELOPMENT_TEAM: ${GEMMASCREEN_DEVELOPMENT_TEAM}
+        CODE_SIGN_STYLE: Automatic
+        OTHER_LDFLAGS: -all_load
+
+  # 首发版：把模型随包打入(~6GB)。首启动把模型播种到 Application Support，供后续更新版复用。
+  # 与 GlimmerMac 同 bundle id + 同产物名(GlimmerMac.app)，更新版可无缝覆盖。
+  GlimmerMacFull:
+    type: application
+    platform: macOS
+    sources:
+      - MacApp
+      - Resources
+      - path: Model/model-Q4_K_M.gguf
+        buildPhase: resources
+      - path: Model/mmproj-bf16.gguf
+        buildPhase: resources
+    dependencies:
+      - package: GlimmerIOS
+        product: GlimmerIOS
+    info:
+      path: MacApp/Info.plist
+      properties:
+        CFBundleDisplayName: 微光 Glimmer
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_NAME: GlimmerMac
+        PRODUCT_BUNDLE_IDENTIFIER: cn.youyou.glimmermac
+        SWIFT_VERSION: "5.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ARCHS: arm64
+        SUPPORTED_PLATFORMS: "macosx"
+        DEVELOPMENT_TEAM: ${GEMMASCREEN_DEVELOPMENT_TEAM}
+        CODE_SIGN_STYLE: Automatic
+        OTHER_LDFLAGS: -all_load
+
   GlimmerIOSTests:
     type: bundle.unit-test
     platform: iOS
@@ -113,3 +174,19 @@ schemes:
         GlimmerGallery: all
     run:
       config: Debug
+  GlimmerMac:
+    build:
+      targets:
+        GlimmerMac: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  GlimmerMacFull:
+    build:
+      targets:
+        GlimmerMacFull: all
+    run:
+      config: Debug
+    archive:
+      config: Release
