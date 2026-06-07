@@ -18,7 +18,10 @@ struct ReportConversationView: View {
     var animateInitialContent: Bool = true
     var isChatReady: Bool = false
     var isResponding: Bool = false
+    /// 对话初始化失败的文案（自动重试用尽后才非空）；非空时输入栏显示「重试」而非转圈。
+    var chatError: String? = nil
     var onSend: (String) -> Void = { _ in }
+    var onRetryChat: () -> Void = {}
     var onBack: () -> Void = {}
     var onSelectTab: (GlimmerTab) -> Void = { _ in }
 
@@ -48,6 +51,12 @@ struct ReportConversationView: View {
 
     private var canSend: Bool {
         isChatReady && !isResponding && !draft.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private var inputPlaceholder: String {
+        if isChatReady { return "可以和我聊聊" }
+        if chatError != nil { return "对话初始化失败，点右侧重试" }
+        return "正在准备本地对话…"
     }
 
     private var nonAnimatedMessageToken: String {
@@ -245,7 +254,7 @@ struct ReportConversationView: View {
         HStack(spacing: 8) {
             // 单行输入：回车即发送（onSubmit 仅对单行 TextField 触发；axis:.vertical 时回车=换行不触发）。
             // 始终可聚焦/输入；能否发送由 canSend 门控（模型对话就绪前不发）。
-            TextField(isChatReady ? "可以和我聊聊" : "正在准备本地对话…", text: $draft)
+            TextField(inputPlaceholder, text: $draft)
                 .font(.system(size: 16, weight: .light))
                 .foregroundStyle(GTheme.ink)
                 .tint(Color(hex: 0xF8C304))
@@ -255,17 +264,38 @@ struct ReportConversationView: View {
                 .padding(.vertical, 12)
                 .onSubmit(submit)
 
-            Button(action: submit) {
-                Image(systemName: "arrow.up")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.white)
+            if isChatReady {
+                Button(action: submit) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(GTheme.ink, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
+                .disabled(!canSend)
+                .opacity(canSend ? 1.0 : 0.4)
+            } else if chatError != nil {
+                // 自动重试用尽仍失败 → 给可点的「重试」按钮，避免无限转圈。
+                Button(action: onRetryChat) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Color(hex: 0xC0392B), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
+            } else {
+                // 对话还在准备（把视频重新灌进本地模型的 KV-cache）→ 显示 loading 而非灰箭头，
+                // 避免看起来像“发送坏了”。就绪后切回可点的发送按钮。
+                ProgressView()
+                    .controlSize(.regular)
+                    .tint(Color(hex: 0x666664))
                     .frame(width: 32, height: 32)
-                    .background(GTheme.ink, in: Circle())
+                    .padding(.trailing, 8)
             }
-            .buttonStyle(.plain)
-            .padding(.trailing, 8)
-            .disabled(!canSend)
-            .opacity(canSend ? 1.0 : 0.4)
         }
         .frame(minHeight: 48)
         .background(.white.opacity(0.6))
