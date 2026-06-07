@@ -1,4 +1,5 @@
 import SwiftUI
+import GlimmerCore
 
 /// 屏6 分析中 — Figma 53:445
 ///
@@ -61,16 +62,20 @@ struct AnalyzingView: View {
 
     private var analysisCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 4) {
+            HStack(alignment: .top, spacing: 4) {
                 bundleImage("icon_ai_small")
                     .resizable().scaledToFit()
                     .frame(width: 16, height: 16)
-                HStack(spacing: 0) {
-                    Text("Glimmer 本地完整观察视频并分析")
-                    AnimatedEllipsis()
+                    .padding(.top, 1) // 文案折行时与第一行文字顶部对齐
+                // 省略号拼进同一个 Text：折行时跟在最后一个字后面，不再吊在整段文字右侧
+                TimelineView(.periodic(from: .now, by: 0.45)) { ctx in
+                    let phase = Int(ctx.date.timeIntervalSinceReferenceDate / 0.45) % 4
+                    Text("分析需要一些时间，请勿离开当前页面，以免任务中断重来")
+                        + Text(String(repeating: ".", count: phase))
                 }
                 .font(.system(size: 14))
                 .foregroundStyle(Color(hex: 0x6A685D))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             // 流式行为词列表 — 自动滚动到最新一行，填满卡片剩余高度
@@ -179,19 +184,6 @@ private struct StreamingBehaviorList: View {
     }
 }
 
-// MARK: - 动态省略号（. .. ... 循环，约 0.45s/拍）
-
-private struct AnimatedEllipsis: View {
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.45)) { ctx in
-            let phase = Int(ctx.date.timeIntervalSinceReferenceDate / 0.45) % 4
-            // phase: 0=" ", 1=".", 2="..", 3="..."
-            Text(" " + String(repeating: ".", count: phase))
-                .monospacedDigit()
-        }
-    }
-}
-
 // MARK: - Gallery demo
 
 /// Gallery 预览容器：模拟真模型 — 9 位 code 一次性"很快"出完（200ms/位，
@@ -207,13 +199,9 @@ struct AnalyzingDemoContainer: View {
     /// 假 9 位 code（mock：观察到几项关注行为）。
     private let demoCode = "101100010"
 
-    /// 从 demoCode 模板化结论（与真实 AsdBehaviorReport.conclusionText 同款措辞）。
+    /// 从 demoCode 模板化结论（直接复用真实解析器，与 AsdBehaviorReport.conclusionText 完全一致）。
     private var demoConclusion: String {
-        let names = zip(AnalyzingView.featureNames, demoCode)
-            .filter { $0.1 == "1" }
-            .map(\.0)
-        guard !names.isEmpty else { return "本次片段中，未注意到自闭症倾向类型行为。" }
-        return "本次片段中，注意到一些需要关注的行为表现，例如：\(names.joined(separator: "、"))。这些内容仅描述片段中的可见线索，供后续观察参考。"
+        AsdBehaviorParser.parse(demoCode)?.conclusionText ?? ""
     }
 
     var body: some View {

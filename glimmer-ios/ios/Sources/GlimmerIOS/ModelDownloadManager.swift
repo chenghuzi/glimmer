@@ -62,6 +62,9 @@ final class ModelDownloadManager {
 
     var progress: CGFloat = 0
     var phase: Phase = .idle
+    /// 已下载 / 总字节，供 UI 显示「0.7 / 6.3 GB」与百分比（进度条太粗看不出在动）。
+    var downloadedBytes: Int64 = 0
+    var totalBytes: Int64 = 0
 
     var isReady: Bool {
         phase == .ready
@@ -178,6 +181,8 @@ final class ModelDownloadManager {
     }
 
     private func updateProgress(completedBytes: Int64, totalBytes: Int64) {
+        downloadedBytes = completedBytes
+        self.totalBytes = totalBytes
         let value = Double(completedBytes) / Double(totalBytes)
         progress = CGFloat(max(0, min(1, value)))
     }

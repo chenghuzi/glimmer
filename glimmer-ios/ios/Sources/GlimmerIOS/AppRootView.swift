@@ -32,10 +32,10 @@ public struct AppRootView: View {
                 )
                 .transition(.opacity)
             case .loading:
-                // macOS 播种时复用同一个 loading 屏，进度来自 prepareProgress、文案换成「准备本地模型」；
-                // 其它情况(iOS 下载 / macOS 下载兜底)用 downloader.progress + 默认下载文案。
                 ModelLoadingView(
                     progress: preparingFromBundle ? prepareProgress : downloader.progress,
+                    downloadedBytes: preparingFromBundle ? 0 : downloader.downloadedBytes,
+                    totalBytes: preparingFromBundle ? 0 : downloader.totalBytes,
                     title: preparingFromBundle ? "首次启动，正在准备本地模型…" : nil
                 )
                 .transition(.opacity)

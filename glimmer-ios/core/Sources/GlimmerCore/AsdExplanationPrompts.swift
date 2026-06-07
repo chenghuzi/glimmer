@@ -36,8 +36,6 @@ public enum AsdExplanationPrompts {
         行为筛查结果如下，这是后续解释对话的固定参考对象，不是新的分类请求。
 
         \(summary)
-
-        结论：\(report.conclusionText)
         """
     }
 }
