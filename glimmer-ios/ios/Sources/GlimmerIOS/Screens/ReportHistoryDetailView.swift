@@ -7,7 +7,7 @@ struct ReportHistoryDetailView: View {
     var onSelectAnalyze: () -> Void = {}
 
     @State private var service = ScreeningService()
-    @State private var started = false
+    @State private var startedRecordID: UUID?
 
     private var record: ReportConversationRecord? {
         store.record(id: recordID)
@@ -23,20 +23,27 @@ struct ReportHistoryDetailView: View {
                 messages: service.chatMessages,
                 isChatReady: service.isChatReady,
                 isResponding: service.isChatResponding,
-                onSend: { text in Task { await service.sendChatMessage(text) } },
+                onSend: { text in
+                    Task { await service.sendChatMessage(text) }
+                },
                 onBack: onBack,
                 onSelectTab: { tab in
                     if tab == .analyze { onSelectAnalyze() }
                 }
             )
             .task(id: record.id) {
-                guard !started else { return }
-                started = true
+                guard startedRecordID != record.id else { return }
+                startedRecordID = record.id
                 service.restore(report: report, messages: record.messages)
                 await startChat(record: record)
             }
             .onChange(of: service.chatMessages) { _, messages in
                 store.updateMessages(recordID: record.id, messages: messages)
+            }
+            .onDisappear {
+                Task {
+                    await service.shutdown()
+                }
             }
         } else {
             missingRecordView

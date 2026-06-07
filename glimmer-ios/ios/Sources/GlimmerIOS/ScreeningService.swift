@@ -13,15 +13,16 @@ final class ScreeningService {
     var isChatResponding: Bool = false
     var chatError: String?
 
-    private let runner = AsdGgufRunner()
-    private var loaded = false
+    private let ownerID = UUID()
+    private let runner = AsdGgufRunner.shared
+    private var isClosed = false
 
     func ensureLoaded() async throws {
-        if loaded { return }
+        isClosed = false
         statusText = "加载模型中…"
 
-        try await runner.load(modelFiles: ModelCatalog.resolvedModelFiles())
-        loaded = true
+        try await runner.load(modelFiles: ModelCatalog.resolvedModelFiles(), ownerID: ownerID)
+        try Task.checkCancellation()
         statusText = "已就绪（本地 · 看 + 听）"
     }
 
@@ -46,17 +47,23 @@ final class ScreeningService {
         isChatReady = false
         isChatResponding = false
         chatError = nil
-        await runner.invalidateExplanationSession()
+        await runner.invalidateExplanationSession(ownerID: ownerID)
         defer { isRunning = false }
 
-        // 纯视觉投影器不支持音频 → 跳过音频，避免 marker 数与媒体数不匹配
+        let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
         let request = AsdGgufRequestBuilder.build(
             frameURLs: frameURLs,
-            audioURL: runner.supportsAudio ? audioURL : nil,
+            audioURL: supportsAudio ? audioURL : nil,
             userPrompt: instruction
         )
-        let code = try await runner.generate(systemPrompt: AsdGgufPrompts.system, request: request)
+        let code = try await runner.generate(
+            systemPrompt: AsdGgufPrompts.system,
+            request: request,
+            ownerID: ownerID
+        )
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        try Task.checkCancellation()
+        guard !isClosed else { return }
         if let parsed = AsdBehaviorParser.parse(code) {
             report = parsed
             output = parsed.jsonString
@@ -79,16 +86,21 @@ final class ScreeningService {
         chatError = nil
         chatMessages = initialMessages
 
+        await runner.invalidateExplanationSession(ownerID: ownerID)
+        let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
         let request = AsdGgufRequestBuilder.build(
             frameURLs: frameURLs,
-            audioURL: runner.supportsAudio ? audioURL : nil,
+            audioURL: supportsAudio ? audioURL : nil,
             userPrompt: AsdExplanationPrompts.userInstruction
         )
         try await runner.beginExplanationSession(
             systemPrompt: AsdExplanationPrompts.system,
             request: request,
-            assistantContext: assistantContext(report: report, previousMessages: initialMessages)
+            assistantContext: assistantContext(report: report, previousMessages: initialMessages),
+            ownerID: ownerID
         )
+        try Task.checkCancellation()
+        guard !isClosed else { return }
         isChatReady = true
         statusText = "已就绪（本地 · 可对话）"
     }
@@ -103,8 +115,10 @@ final class ScreeningService {
         defer { isChatResponding = false }
 
         do {
-            let answer = try await runner.sendExplanationMessage(question)
+            let answer = try await runner.sendExplanationMessage(question, ownerID: ownerID)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            try Task.checkCancellation()
+            guard !isClosed else { return }
             chatMessages.append(
                 ExplanationChatMessage(
                     role: .assistant,
@@ -116,6 +130,15 @@ final class ScreeningService {
             chatError = message
             chatMessages.append(ExplanationChatMessage(role: .assistant, text: message, isError: true))
         }
+    }
+
+    func shutdown() async {
+        isClosed = true
+        isRunning = false
+        isChatReady = false
+        isChatResponding = false
+        await runner.shutdown(ownerID: ownerID)
+        statusText = "未加载"
     }
 
     static func assembleJSON(fromCode raw: String) -> String? {
