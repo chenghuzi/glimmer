@@ -42,7 +42,7 @@ For long-running local experiments, send completion/failure notifications throug
 
 ```bash
 curl -fsS --get \
-  "https://api.day.app/7GofcjfmCvWZqvfrvYuFV/Codex%20run%20finished/Replace%20this%20with%20the%20run%20summary." \
+  "${BARK_URL:?Set BARK_URL to your Bark endpoint}/Codex%20run%20finished/Replace%20this%20with%20the%20run%20summary." \
   --data-urlencode "group=hz_res_ft" \
   --data-urlencode "isArchive=1"
 ```

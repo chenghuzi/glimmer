@@ -26,6 +26,13 @@ targets:
         NSCameraUsageDescription: 录制行为视频用于本地筛查分析（数据不离开设备）
         NSMicrophoneUsageDescription: 录制视频时一并采集声音（数据不离开设备）
         ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${GEMMASCREEN_PRODUCT_BUNDLE_IDENTIFIER}
