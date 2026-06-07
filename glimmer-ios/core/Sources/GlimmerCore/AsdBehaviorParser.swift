@@ -30,9 +30,26 @@ public struct AsdBehaviorReport: Equatable, Sendable {
     public var conclusionText: String {
         let names = detectedLabels.map(\.name)
         guard !names.isEmpty else {
-            return "本次片段中，未注意到自闭症倾向类型行为。"
+            return """
+            基于本次上传的视频片段，系统暂未观察到明显的可关注行为特征。
+
+            从当前片段来看，孩子的行为表现未呈现出明显异常信号，家长可以先不必过度焦虑。儿童在不同场景、不同情绪状态下的表现可能会有所变化，建议继续结合日常互动、语言回应、眼神交流和兴趣行为等情况进行观察。
+
+            温馨提示
+            本结果仅基于当前视频片段中的可观察行为线索生成，不构成医学诊断，也不能替代专业评估。如后续仍有担心，可继续上传更多日常片段，或咨询发育行为儿科、儿童保健科等专业医生。
+            """
         }
-        return "本次片段中，注意到一些需要关注的行为表现，例如：\(names.joined(separator: "、"))。这些内容仅描述片段中的可见线索，供后续观察参考。"
+        let featureList = names.enumerated()
+            .map { index, name in String(format: "%02d｜%@", index + 1, name) }
+            .joined(separator: "\n")
+        return """
+        基于本次上传视频片段，系统识别到以下值得关注的行为特征：
+
+        \(featureList)
+
+        结果说明
+        以上结果仅基于本次视频片段中的可观察行为线索生成，用于早期筛查与风险提示参考，不构成医学诊断。如家长持续存在担忧，建议结合儿童日常表现，并咨询发育行为儿科、儿童保健科或相关专业医生。
+        """
     }
 
     public var jsonString: String {

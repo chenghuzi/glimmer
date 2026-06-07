@@ -11,7 +11,7 @@ struct ModelDownloadRegionSelectionView: View {
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
 
-                bundleImage("glimmer_wordmark")
+                bundleImage("glimmer_wordmark_clear")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 214)
