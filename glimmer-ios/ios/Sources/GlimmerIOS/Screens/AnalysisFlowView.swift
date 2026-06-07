@@ -36,6 +36,8 @@ struct AnalysisFlowView: View {
             if showReport {
                 ReportConversationView(
                     timestamp: timestamp,
+                    videoTitle: videoURL.lastPathComponent.isEmpty ? "视频" : videoURL.lastPathComponent,
+                    videoURL: videoURL,
                     videoDuration: videoDuration,
                     conclusion: service.report?.conclusionText ?? service.output,
                     messages: service.chatMessages,

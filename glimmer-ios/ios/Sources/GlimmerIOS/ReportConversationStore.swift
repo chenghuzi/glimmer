@@ -3,6 +3,7 @@ import GlimmerCore
 import Observation
 
 struct ReportConversationMedia {
+    let videoURL: URL
     let frameURLs: [URL]
     let audioURL: URL?
 }
@@ -16,6 +17,7 @@ struct ReportConversationRecord: Codable, Identifiable, Equatable {
     let labelCode: String
     let conclusion: String
     var messages: [ExplanationChatMessage]
+    let videoFileName: String
     let frameFileNames: [String]
     let audioFileName: String?
 
@@ -34,9 +36,9 @@ final class ReportConversationStore {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default, rootDirectory: URL? = nil) {
         self.fileManager = fileManager
-        self.rootDirectory = fileManager
+        self.rootDirectory = rootDirectory ?? fileManager
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("GlimmerReports", isDirectory: true)
         self.encoder = JSONEncoder()
@@ -78,6 +80,7 @@ final class ReportConversationStore {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
 
         do {
+            let videoFileName = try copyVideo(videoURL, into: directory)
             let frameFileNames = try copyFrames(media.frameURLs, into: directory)
             let audioFileName = try copyAudio(media.audioURL, into: directory)
             let record = ReportConversationRecord(
@@ -89,6 +92,7 @@ final class ReportConversationStore {
                 labelCode: report.labelCode,
                 conclusion: report.conclusionText,
                 messages: [],
+                videoFileName: videoFileName,
                 frameFileNames: frameFileNames,
                 audioFileName: audioFileName
             )
@@ -120,13 +124,14 @@ final class ReportConversationStore {
 
     func media(for record: ReportConversationRecord) -> ReportConversationMedia {
         let directory = directoryURL(for: record.id)
+        let videoURL = directory.appendingPathComponent(record.videoFileName)
         let frameURLs = record.frameFileNames
             .map { directory.appendingPathComponent($0) }
             .filter { fileManager.fileExists(atPath: $0.path) }
         let audioURL = record.audioFileName
             .map { directory.appendingPathComponent($0) }
             .flatMap { fileManager.fileExists(atPath: $0.path) ? $0 : nil }
-        return ReportConversationMedia(frameURLs: frameURLs, audioURL: audioURL)
+        return ReportConversationMedia(videoURL: videoURL, frameURLs: frameURLs, audioURL: audioURL)
     }
 
     private func ensureRootDirectory() throws {
@@ -152,6 +157,13 @@ final class ReportConversationStore {
 
     private func sortRecords() {
         records.sort { $0.createdAt > $1.createdAt }
+    }
+
+    private func copyVideo(_ videoURL: URL, into directory: URL) throws -> String {
+        let extensionName = videoURL.pathExtension.isEmpty ? "mp4" : videoURL.pathExtension
+        let fileName = "video.\(extensionName)"
+        try copyItem(from: videoURL, to: directory.appendingPathComponent(fileName))
+        return fileName
     }
 
     private func copyFrames(_ frameURLs: [URL], into directory: URL) throws -> [String] {

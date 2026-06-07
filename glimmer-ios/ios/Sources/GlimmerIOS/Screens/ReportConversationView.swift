@@ -1,4 +1,5 @@
 import SwiftUI
+import AVKit
 
 /// 屏7 报告结论 + 屏8 追问对话 — Figma 53:751 + 53:994。
 ///
@@ -9,9 +10,12 @@ import SwiftUI
 struct ReportConversationView: View {
     var timestamp: String = "2026-06-03 12:12:12"
     var videoTitle: String = "视频"
+    var videoURL: URL?
     var videoDuration: String = "00:00"
     var conclusion: String
     var messages: [ExplanationChatMessage] = []
+    var nonAnimatedMessageIDs: Set<UUID> = []
+    var animateInitialContent: Bool = true
     var isChatReady: Bool = false
     var isResponding: Bool = false
     var onSend: (String) -> Void = { _ in }
@@ -28,6 +32,8 @@ struct ReportConversationView: View {
     // 只揭示「刚到达的那条」助手消息，更早的消息保持完整。
     @State private var chatStreamID: UUID?
     @State private var chatStreamCount: Int = 0
+    @State private var knownMessageIDs: Set<UUID> = []
+    @State private var previewVideo: VideoPreviewItem?
     private let chatCharInterval: Duration = .milliseconds(18)
 
     private func revealedChatText(for msg: ExplanationChatMessage) -> String {
@@ -44,6 +50,13 @@ struct ReportConversationView: View {
         isChatReady && !isResponding && !draft.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
+    private var nonAnimatedMessageToken: String {
+        nonAnimatedMessageIDs
+            .map(\.uuidString)
+            .sorted()
+            .joined(separator: ",")
+    }
+
     var body: some View {
         ZStack {
             GTheme.bg.ignoresSafeArea()
@@ -52,7 +65,14 @@ struct ReportConversationView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 20) {
                         conclusionCard
-                        PlayerBar(title: "\(timestamp) \(videoTitle)", duration: videoDuration)
+                        PlayerBar(
+                            title: "\(timestamp) \(videoTitle)",
+                            duration: videoDuration,
+                            onPlay: {
+                                guard let videoURL else { return }
+                                previewVideo = VideoPreviewItem(url: videoURL)
+                            }
+                        )
                         ForEach(messages) { msg in
                             switch msg.role {
                             case .user:      userBubble(msg.text)
@@ -96,8 +116,20 @@ struct ReportConversationView: View {
                     GlimmerTabBar(active: .report, onSelect: onSelectTab)
                 }
             }
+
+            if let previewVideo {
+                FullscreenVideoPreview(
+                    url: previewVideo.url,
+                    onClose: { self.previewVideo = nil }
+                )
+                .zIndex(10)
+            }
         }
         .task(id: conclusion) {
+            guard animateInitialContent else {
+                revealedCount = conclusion.count
+                return
+            }
             revealedCount = 0
             let total = conclusion.count
             while revealedCount < total && !Task.isCancelled {
@@ -106,9 +138,17 @@ struct ReportConversationView: View {
                 revealedCount = min(revealedCount + 1, total)
             }
         }
+        .task(id: nonAnimatedMessageToken) {
+            knownMessageIDs.formUnion(nonAnimatedMessageIDs)
+        }
         // 追问回复逐字揭示：每当最新一条变为「助手非错误」消息就从头流式播放
         .task(id: messages.last?.id) {
             guard let last = messages.last, last.role == .assistant, !last.isError else { return }
+            guard !nonAnimatedMessageIDs.contains(last.id), !knownMessageIDs.contains(last.id) else {
+                knownMessageIDs.insert(last.id)
+                return
+            }
+            knownMessageIDs.formUnion(messages.map(\.id))
             chatStreamID = last.id
             chatStreamCount = 0
             let total = last.text.count
@@ -247,6 +287,49 @@ private struct AnimatedThinkingDots: View {
         TimelineView(.periodic(from: .now, by: 0.45)) { ctx in
             let phase = Int(ctx.date.timeIntervalSinceReferenceDate / 0.45) % 4
             Text(String(repeating: ".", count: phase)).monospacedDigit()
+        }
+    }
+}
+
+private struct VideoPreviewItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct FullscreenVideoPreview: View {
+    let url: URL
+    var onClose: () -> Void
+    @State private var player: AVPlayer
+
+    init(url: URL, onClose: @escaping () -> Void) {
+        self.url = url
+        self.onClose = onClose
+        _player = State(initialValue: AVPlayer(url: url))
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Color.black.ignoresSafeArea()
+
+            VideoPlayer(player: player)
+                .ignoresSafeArea()
+
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.38), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 18)
+            .padding(.leading, 16)
+        }
+        .onAppear {
+            player.play()
+        }
+        .onDisappear {
+            player.pause()
         }
     }
 }
