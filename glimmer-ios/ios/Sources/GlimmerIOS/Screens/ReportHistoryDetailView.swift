@@ -15,12 +15,16 @@ struct ReportHistoryDetailView: View {
 
     var body: some View {
         if let record, let report = record.report {
+            let media = store.media(for: record)
             ReportConversationView(
                 timestamp: record.timestamp,
-                videoTitle: "视频",
+                videoTitle: record.videoTitle,
+                videoURL: media.videoURL,
                 videoDuration: record.videoDuration,
                 conclusion: record.conclusion,
                 messages: service.chatMessages,
+                nonAnimatedMessageIDs: Set(record.messages.map(\.id)),
+                animateInitialContent: false,
                 isChatReady: service.isChatReady,
                 isResponding: service.isChatResponding,
                 onSend: { text in

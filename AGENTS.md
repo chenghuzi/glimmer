@@ -21,6 +21,7 @@ uv add <package>
 - Keep generated artifacts under `outputs/`; this path is gitignored.
 - This project is screening support for observable behavior labels, not an ASD diagnostic system. Do not introduce wording that claims diagnosis.
 - Preserve the train/validation/test boundary. Use validation during training; use test only for final reporting.
+- iOS 本地报告记录 schema 不做旧版本兼容，除非用户明确要求兼容旧记录；可以让旧本地记录失效，以保持实现简单。
 
 ## Important Local Paths
 
