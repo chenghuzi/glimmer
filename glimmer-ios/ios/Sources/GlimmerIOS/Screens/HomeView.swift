@@ -61,48 +61,64 @@ struct HomeView: View {
     // MARK: - 视频分析卡片（64:444）
 
     private var videoCard: some View {
-        Button(action: onStart) {
-            VStack(spacing: 0) {
-                // 上半浅蓝块 + 手机插画（64:452/453，旋转 12°）
-                ZStack {
-                    Color(hex: 0xEEF2F5)
-                    bundleImage("phone_rec")
-                        .resizable().scaledToFit()
-                        .rotationEffect(.degrees(12))
-                        .padding(20)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 300)
-                .clipped()
-
-                // 底部信息行（64:445）
-                HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(L10n.text(.videoAnalysis, language: languageStore.language))
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(GTheme.ink)
-                            .lineLimit(1)
-                        Text(L10n.text(.videoAnalysisSubtitle, language: languageStore.language))
-                            .font(.system(size: 13))
-                            .foregroundStyle(GTheme.subtle)
-                            .lineLimit(2)
-                    }
-                    Spacer(minLength: 0)
-                    // 64:450：竖直箭头旋 90° → 视觉向右指（播放感）
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(GTheme.onInk)
-                        .rotationEffect(.degrees(90))
-                        .frame(width: 40, height: 40)
-                        .background(GTheme.ink, in: Circle())
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 22)
-            }
-            .background(.white)
-            .clipShape(RoundedRectangle(cornerRadius: 24))
+#if os(macOS)
+        videoCardContent
+            .frame(maxWidth: .infinity)
             .contentShape(RoundedRectangle(cornerRadius: 24))
+            .onTapGesture(perform: onStart)
+            .accessibilityAddTraits(.isButton)
+#else
+        Button(action: onStart) {
+            videoCardContent
         }
+        .frame(maxWidth: .infinity)
+        .contentShape(RoundedRectangle(cornerRadius: 24))
         .buttonStyle(.plain)
+#endif
+    }
+
+    private var videoCardContent: some View {
+        VStack(spacing: 0) {
+            // 上半浅蓝块 + 手机插画（64:452/453，旋转 12°）
+            ZStack {
+                Color(hex: 0xEEF2F5)
+                bundleImage("phone_rec")
+                    .resizable().scaledToFit()
+                    .rotationEffect(.degrees(12))
+                    .padding(20)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 300)
+            .clipped()
+
+            // 底部信息行（64:445）
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(L10n.text(.videoAnalysis, language: languageStore.language))
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundStyle(GTheme.ink)
+                        .lineLimit(1)
+                    Text(L10n.text(.videoAnalysisSubtitle, language: languageStore.language))
+                        .font(.system(size: 13))
+                        .foregroundStyle(GTheme.subtle)
+                        .lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                // 64:450：竖直箭头旋 90° → 视觉向右指（播放感）
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(GTheme.onInk)
+                    .rotationEffect(.degrees(90))
+                    .frame(width: 40, height: 40)
+                    .background(GTheme.ink, in: Circle())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 22)
+        }
+        .frame(maxWidth: .infinity)
+        .background(.white)
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .contentShape(RoundedRectangle(cornerRadius: 24))
     }
 }

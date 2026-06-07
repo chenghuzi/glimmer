@@ -5,6 +5,8 @@ enum ModelCatalogError: LocalizedError {
     case missingManifest
     case invalidManifest
     case missingItem(String)
+    case invalidLocalSelection
+    case fileSizeMismatch(String)
     case checksumMismatch(String)
 
     var errorDescription: String? {
@@ -15,6 +17,10 @@ enum ModelCatalogError: LocalizedError {
             return "ModelManifest.json could not be decoded."
         case .missingItem(let id):
             return "Missing model manifest item: \(id)."
+        case .invalidLocalSelection:
+            return "Select both model-Q4_K_M.gguf and mmproj-bf16.gguf."
+        case .fileSizeMismatch(let filename):
+            return "Local model file size does not match manifest: \(filename)."
         case .checksumMismatch(let filename):
             return "Downloaded model checksum mismatch: \(filename)."
         }
@@ -132,18 +138,18 @@ enum ModelCatalog {
             throw ModelCatalogError.missingItem("mmproj")
         }
         let modelURL: URL
-        if let bundled = bundledModelURL(model) {
-            modelURL = bundled
-        } else if hasTrustedLocalFile(model) {
+        if hasTrustedLocalFile(model) {
             modelURL = localURL(model)
+        } else if let bundled = bundledModelURL(model) {
+            modelURL = bundled
         } else {
             throw AsdGgufRunnerError.missingModel
         }
         let mmprojURL: URL
-        if let bundled = bundledModelURL(mmproj) {
-            mmprojURL = bundled
-        } else if hasTrustedLocalFile(mmproj) {
+        if hasTrustedLocalFile(mmproj) {
             mmprojURL = localURL(mmproj)
+        } else if let bundled = bundledModelURL(mmproj) {
+            mmprojURL = bundled
         } else {
             throw AsdGgufRunnerError.missingMmproj
         }
@@ -182,6 +188,101 @@ enum ModelCatalog {
             try writeReceipt(for: item, sourceURL: item.url, byteSize: item.byteSize, sha256: item.sha256.lowercased())
             progress?(Double(done) / Double(total))
         }
+    }
+
+    static func localModelFiles(from urls: [URL]) throws -> AsdGgufModelFiles {
+        guard let model = item(id: "model") else {
+            throw ModelCatalogError.missingItem("model")
+        }
+        guard let mmproj = item(id: "mmproj") else {
+            throw ModelCatalogError.missingItem("mmproj")
+        }
+
+        var selected: [String: URL] = [:]
+        for url in urls {
+            selected[url.lastPathComponent.lowercased()] = url
+        }
+        guard let modelURL = selected[model.filename.lowercased()],
+              let mmprojURL = selected[mmproj.filename.lowercased()] else {
+            throw ModelCatalogError.invalidLocalSelection
+        }
+        return AsdGgufModelFiles(modelURL: modelURL, mmprojURL: mmprojURL)
+    }
+
+    static func installLocalModelFiles(
+        modelURL: URL,
+        mmprojURL: URL,
+        progress: ((Double) -> Void)? = nil
+    ) throws {
+        guard let model = item(id: "model") else {
+            throw ModelCatalogError.missingItem("model")
+        }
+        guard let mmproj = item(id: "mmproj") else {
+            throw ModelCatalogError.missingItem("mmproj")
+        }
+
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let pairs: [(Item, URL)] = [(model, modelURL), (mmproj, mmprojURL)]
+        let total = max(pairs.reduce(Int64(0)) { $0 + $1.0.byteSize }, 1)
+        var done: Int64 = 0
+        for (item, sourceURL) in pairs {
+            try installLocalModelFile(
+                item,
+                sourceURL: sourceURL,
+                alreadyDone: done,
+                total: total,
+                progress: progress
+            )
+            done += item.byteSize
+            progress?(Double(done) / Double(total))
+        }
+    }
+
+    private static func installLocalModelFile(
+        _ item: Item,
+        sourceURL: URL,
+        alreadyDone: Int64,
+        total: Int64,
+        progress: ((Double) -> Void)?
+    ) throws {
+        let needsStop = sourceURL.startAccessingSecurityScopedResource()
+        defer { if needsStop { sourceURL.stopAccessingSecurityScopedResource() } }
+
+        guard fileSize(sourceURL) == item.byteSize else {
+            throw ModelCatalogError.fileSizeMismatch(sourceURL.lastPathComponent)
+        }
+
+        let digest = try sha256Hex(of: sourceURL)
+        guard digest == item.sha256.lowercased() else {
+            throw ModelCatalogError.checksumMismatch(sourceURL.lastPathComponent)
+        }
+
+        let destination = localURL(item)
+        let sameFile = sourceURL.standardizedFileURL.path == destination.standardizedFileURL.path
+        if !sameFile {
+            try? FileManager.default.removeItem(at: destination)
+            do {
+                try copyFileReportingProgress(
+                    from: sourceURL,
+                    to: destination,
+                    alreadyDone: alreadyDone,
+                    total: total,
+                    progress: progress
+                )
+            } catch {
+                try? FileManager.default.removeItem(at: destination)
+                removeReceipt(item)
+                throw error
+            }
+        }
+
+        guard fileSize(destination) == item.byteSize else {
+            removeReceipt(item)
+            throw ModelCatalogError.fileSizeMismatch(item.filename)
+        }
+
+        try writeReceipt(for: item, sourceURL: sourceURL, byteSize: item.byteSize, sha256: digest)
     }
 
     private static func copyFileReportingProgress(

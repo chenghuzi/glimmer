@@ -4,22 +4,71 @@ import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
 #endif
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// App flow coordinator: splash → model download gate → main flow.
 public struct AppRootView: View {
     public init() {}
 
     private static let logger = Logger(subsystem: "cn.enactflow.glimmer", category: "ModelDownload")
+#if os(macOS)
+    private static let ggufContentType = UTType(filenameExtension: "gguf") ?? .data
+#endif
 
     @Environment(AppLanguageStore.self) private var languageStore
 
-    private enum Phase { case splash, selectRegion, loading, main, needFullInstall }
+    private enum Phase {
+        case splash
+        case selectRegion
+#if os(macOS)
+        case selectModelSource
+#endif
+        case loading
+        case main
+    }
+
     @State private var phase: Phase = .splash
     @State private var downloader = ModelDownloadManager()
     @State private var regionSelectionMessage: String?
     // macOS：把自带模型从 bundle 播种到 Application Support 时的进度/标记
     @State private var preparingFromBundle = false
     @State private var prepareProgress: CGFloat = 0
+#if os(macOS)
+    @State private var sourceSelectionMessage: String?
+    @State private var importingLocalModels = false
+    @State private var showLocalModelImporter = false
+#endif
+
+    private var preparingLocalModels: Bool {
+#if os(macOS)
+        preparingFromBundle || importingLocalModels
+#else
+        preparingFromBundle
+#endif
+    }
+
+    private var loadingTitle: String? {
+#if os(macOS)
+        if preparingFromBundle {
+            return L10n.text(.prepareBundledModel, language: languageStore.language)
+        }
+        if importingLocalModels {
+            return L10n.text(.importLocalModel, language: languageStore.language)
+        }
+#endif
+        return nil
+    }
+
+    private var loadingNotice: String? {
+#if os(macOS)
+        if preparingLocalModels {
+            return L10n.text(.keepAppForegroundForPreparation, language: languageStore.language)
+        }
+#endif
+        return nil
+    }
 
     public var body: some View {
         ZStack {
@@ -33,19 +82,33 @@ public struct AppRootView: View {
                     onSelect: beginDownload
                 )
                 .transition(.opacity)
+#if os(macOS)
+            case .selectModelSource:
+                MacModelSourceSelectionView(
+                    message: sourceSelectionMessage,
+                    onDownload: {
+                        sourceSelectionMessage = nil
+                        regionSelectionMessage = nil
+                        phase = .selectRegion
+                    },
+                    onSelectLocalFiles: {
+                        sourceSelectionMessage = nil
+                        showLocalModelImporter = true
+                    }
+                )
+                .transition(.opacity)
+#endif
             case .loading:
                 ModelLoadingView(
-                    progress: preparingFromBundle ? prepareProgress : downloader.progress,
-                    downloadedBytes: preparingFromBundle ? 0 : downloader.downloadedBytes,
-                    totalBytes: preparingFromBundle ? 0 : downloader.totalBytes,
-                    title: preparingFromBundle ? L10n.text(.prepareBundledModel, language: languageStore.language) : nil
+                    progress: preparingLocalModels ? prepareProgress : downloader.progress,
+                    downloadedBytes: preparingLocalModels ? 0 : downloader.downloadedBytes,
+                    totalBytes: preparingLocalModels ? 0 : downloader.totalBytes,
+                    title: loadingTitle,
+                    notice: loadingNotice
                 )
                 .transition(.opacity)
             case .main:
                 MainFlow()
-                    .transition(.opacity)
-            case .needFullInstall:
-                NeedFullInstallView()
                     .transition(.opacity)
             }
         }
@@ -55,23 +118,31 @@ public struct AppRootView: View {
             try? await Task.sleep(for: .seconds(1.6))
 
 #if os(macOS)
-            // 带模型首发版：把 bundle 内模型播种到 Application Support（一次），
-            // 之后“不带模型的更新版”直接复用，无需重发 6GB / 无需下载。
+            if downloader.hasTrustedModels {
+                phase = .main
+                return
+            }
+
             if ModelCatalog.hasBundledModels && !downloader.hasTrustedModels {
                 preparingFromBundle = true
+                prepareProgress = 0
                 phase = .loading
                 await seedBundledModels()
                 preparingFromBundle = false
-            }
 
-            // Lite 更新版（不带模型）若本机没有已播种的模型 → 不走下载，
-            // 提示用户先装一次"完整安装包"（首发版会一次性把模型放好）。
-            if !ModelCatalog.hasBundledModels && !downloader.hasTrustedModels {
-                phase = .needFullInstall
+                if downloader.hasTrustedModels {
+                    phase = .main
+                } else {
+                    sourceSelectionMessage = L10n.text(.unknownReason, language: languageStore.language)
+                    phase = .selectModelSource
+                }
                 return
             }
-#endif
 
+            sourceSelectionMessage = nil
+            phase = .selectModelSource
+            return
+#else
             if downloader.hasTrustedModels {
                 phase = .main
                 return
@@ -84,7 +155,16 @@ public struct AppRootView: View {
             }
 
             beginDownload(region)
+#endif
         }
+#if os(macOS)
+        .fileImporter(
+            isPresented: $showLocalModelImporter,
+            allowedContentTypes: [Self.ggufContentType],
+            allowsMultipleSelection: true,
+            onCompletion: handleLocalModelImport
+        )
+#endif
     }
 
     private func beginDownload(_ region: ModelDownloadRegion) {
@@ -113,13 +193,69 @@ public struct AppRootView: View {
     }
 
 #if os(macOS)
-    /// 在后台线程把 bundle 内模型拷到 Application Support，进度回主线程刷新。
     private func seedBundledModels() async {
         await Task.detached(priority: .userInitiated) {
             try? ModelCatalog.seedBundledModelsIfNeeded { p in
                 Task { @MainActor in prepareProgress = CGFloat(p) }
             }
         }.value
+    }
+
+    private func handleLocalModelImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case .success(let urls):
+            do {
+                let files = try ModelCatalog.localModelFiles(from: urls)
+                importLocalModelFiles(files)
+            } catch {
+                sourceSelectionMessage = error.localizedDescription
+                phase = .selectModelSource
+            }
+        case .failure(let error):
+            if isFileImporterCancellation(error) {
+                return
+            }
+            sourceSelectionMessage = error.localizedDescription
+            phase = .selectModelSource
+        }
+    }
+
+    private func importLocalModelFiles(_ files: AsdGgufModelFiles) {
+        let modelURL = files.modelURL
+        let mmprojURL = files.mmprojURL
+        importingLocalModels = true
+        prepareProgress = 0
+        phase = .loading
+
+        Task { @MainActor in
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    try ModelCatalog.installLocalModelFiles(
+                        modelURL: modelURL,
+                        mmprojURL: mmprojURL
+                    ) { p in
+                        Task { @MainActor in prepareProgress = CGFloat(p) }
+                    }
+                }.value
+                importingLocalModels = false
+                if downloader.hasTrustedModels {
+                    phase = .main
+                } else {
+                    sourceSelectionMessage = L10n.text(.unknownReason, language: languageStore.language)
+                    phase = .selectModelSource
+                }
+            } catch {
+                importingLocalModels = false
+                Self.logger.error("local model import failed: \(error.localizedDescription, privacy: .public)")
+                sourceSelectionMessage = error.localizedDescription
+                phase = .selectModelSource
+            }
+        }
+    }
+
+    private func isFileImporterCancellation(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSCocoaErrorDomain && nsError.code == CocoaError.Code.userCancelled.rawValue
     }
 #endif
 }
@@ -150,7 +286,6 @@ struct MainFlow: View {
 #endif
 
 #if os(macOS)
-    /// macOS：把用户通过 fileImporter 选的(可能是安全作用域)视频拷到临时目录再用。
     private static func importPickedVideo(_ url: URL) -> URL? {
         let needsStop = url.startAccessingSecurityScopedResource()
         defer { if needsStop { url.stopAccessingSecurityScopedResource() } }
@@ -165,6 +300,24 @@ struct MainFlow: View {
             return nil
         }
     }
+
+    @MainActor
+    private func selectVideoOnMac() {
+        let panel = NSOpenPanel()
+        panel.title = L10n.text(.chooseFromLibrary, language: languageStore.language)
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.movie, .video]
+        panel.begin { response in
+            guard response == .OK,
+                  let picked = panel.url,
+                  let local = Self.importPickedVideo(picked) else { return }
+            Task { @MainActor in
+                analysisURL = IdentifiableURL(url: local)
+            }
+        }
+    }
 #endif
 
     var body: some View {
@@ -176,7 +329,7 @@ struct MainFlow: View {
 #if os(iOS)
                         showSourceSheet = true
 #else
-                        showLibrary = true   // macOS 直接弹文件选择
+                        selectVideoOnMac()
 #endif
                     },
                     onSelectReport: { activeTab = .report }
@@ -265,20 +418,6 @@ struct MainFlow: View {
             AnalysisFlowView(videoURL: item.url, reportStore: reportStore)
         }
 #else
-        // macOS：用系统文件选择器选视频，分析流程用 sheet 呈现。
-        .fileImporter(
-            isPresented: $showLibrary,
-            allowedContentTypes: [.movie, .video],
-            allowsMultipleSelection: false
-        ) { result in
-            guard case let .success(urls) = result,
-                  let picked = urls.first,
-                  let local = Self.importPickedVideo(picked) else { return }
-            Task {
-                try? await Task.sleep(for: .milliseconds(150))
-                analysisURL = IdentifiableURL(url: local)
-            }
-        }
         .sheet(item: $analysisURL) { item in
             AnalysisFlowView(videoURL: item.url, reportStore: reportStore)
                 .frame(minWidth: 430, minHeight: 760)

@@ -7,13 +7,14 @@ struct ModelLoadingView: View {
     var downloadedBytes: Int64 = 0
     var totalBytes: Int64 = 0
     var title: String? = nil
+    var notice: String? = nil
 
     private var message: String {
         title ?? L10n.text(.modelLoadingMessage, language: languageStore.language)
     }
 
     private var foregroundNotice: String {
-        L10n.text(.keepAppForeground, language: languageStore.language)
+        notice ?? L10n.text(.keepAppForeground, language: languageStore.language)
     }
 
     private var percentText: String {

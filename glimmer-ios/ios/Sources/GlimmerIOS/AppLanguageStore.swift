@@ -127,6 +127,16 @@ enum L10n {
 
     static func text(_ key: Key, language: GlimmerLanguage) -> String {
         switch (key, language) {
+        case (.selectModelSource, .zh): return "选择模型来源"
+        case (.selectModelSource, .en): return "Choose Model Source"
+        case (.downloadModelSource, .zh): return "下载模型"
+        case (.downloadModelSource, .en): return "Download Model"
+        case (.loadLocalModelSource, .zh): return "选择本地模型"
+        case (.loadLocalModelSource, .en): return "Choose Local Model"
+        case (.selectLocalModelHint, .zh): return "请选择 model-Q4_K_M.gguf 和 mmproj-bf16.gguf"
+        case (.selectLocalModelHint, .en): return "Choose model-Q4_K_M.gguf and mmproj-bf16.gguf"
+        case (.importLocalModel, .zh): return "正在导入本地模型…"
+        case (.importLocalModel, .en): return "Importing local model..."
         case (.selectModelDownloadRegion, .zh): return "选择模型下载区域"
         case (.selectModelDownloadRegion, .en): return "Select Model Download Region"
         case (.prepareBundledModel, .zh): return "首次启动，正在准备本地模型…"
@@ -135,6 +145,8 @@ enum L10n {
         case (.modelLoadingMessage, .en): return "Downloading model weights before first use...\nAfter this completes, Glimmer works offline"
         case (.keepAppForeground, .zh): return "下载完成前请保持应用处于前台"
         case (.keepAppForeground, .en): return "Keep the app in the foreground until the download completes"
+        case (.keepAppForegroundForPreparation, .zh): return "完成前请保持应用处于前台"
+        case (.keepAppForegroundForPreparation, .en): return "Keep the app in the foreground until this completes"
         case (.unknownReason, .zh): return "未知原因"
         case (.unknownReason, .en): return "Unknown reason"
         case (.splashTagline, .zh): return "和“微光”一起关爱“星星的孩子”"
@@ -219,10 +231,16 @@ enum L10n {
     }
 
     enum Key {
+        case selectModelSource
+        case downloadModelSource
+        case loadLocalModelSource
+        case selectLocalModelHint
+        case importLocalModel
         case selectModelDownloadRegion
         case prepareBundledModel
         case modelLoadingMessage
         case keepAppForeground
+        case keepAppForegroundForPreparation
         case unknownReason
         case splashTagline
         case homeTitle

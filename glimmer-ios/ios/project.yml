@@ -22,7 +22,7 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: 微光 Glimmer
-        CFBundleVersion: "5"
+        CFBundleVersion: "6"
         UILaunchScreen: {}
         NSPhotoLibraryUsageDescription: 选择行为视频，在本地进行筛查分析（数据不离开设备）
         NSCameraUsageDescription: 录制行为视频用于本地筛查分析（数据不离开设备）
@@ -81,8 +81,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Gallery/GlimmerGallery.entitlements
         OTHER_LDFLAGS: -all_load
 
-  # 原生 macOS app：复用 GlimmerIOS 包，Metal 原生跑模型。非沙盒，便于本地运行/调试。
-  # 更新/常规版：不带模型(~20MB)。读 Application Support 里已播种的模型；没有则走下载。
+  # Native macOS app: reuses the GlimmerIOS package and runs the GGUF model with Metal.
+  # Regular build: no bundled weights. It uses trusted Application Support models, otherwise asks the user to download or choose local GGUF files.
   GlimmerMac:
     type: application
     platform: macOS
@@ -109,8 +109,8 @@ targets:
         CODE_SIGN_STYLE: Automatic
         OTHER_LDFLAGS: -all_load
 
-  # 首发版：把模型随包打入(~6GB)。首启动把模型播种到 Application Support，供后续更新版复用。
-  # 与 GlimmerMac 同 bundle id + 同产物名(GlimmerMac.app)，更新版可无缝覆盖。
+  # Full build: bundles the model files and seeds them into Application Support on first launch.
+  # It shares the bundle id and product name with GlimmerMac, so regular updates can replace it cleanly.
   GlimmerMacFull:
     type: application
     platform: macOS
