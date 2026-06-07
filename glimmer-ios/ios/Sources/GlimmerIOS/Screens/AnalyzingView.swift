@@ -6,6 +6,8 @@ import GlimmerCore
 /// The model emits a strict 9-bit internal code. The UI reveals the mapped
 /// behavior names at a fixed pace, then appends the derived background row.
 struct AnalyzingView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var timestamp: String = "2026-06-03 12:12:12"
     var partialCode: String = ""
     var onBack: () -> Void = {}
@@ -33,7 +35,7 @@ struct AnalyzingView: View {
 
     /// 当前已揭示的行为词（按位顺序）。`observed=true` 用强调色，否则灰。
     private var revealedLines: [(name: String, observed: Bool)] {
-        let names = AnalyzingView.featureNames
+        let names = AnalyzingView.featureNames(language: languageStore.language)
         let chars = Array(displayCode)
         let visible = min(revealedCount, chars.count, names.count)
         return (0..<visible).map { i in
@@ -46,13 +48,13 @@ struct AnalyzingView: View {
             Color(hex: 0xF2F2EC).ignoresSafeArea()
 
             VStack(spacing: 12) {
-                GlimmerNavBar(title: "\(timestamp) 分析报告", onBack: onBack)
+                GlimmerNavBar(title: L10n.analysisReportTitle(timestamp: timestamp, language: languageStore.language), onBack: onBack)
                     .padding(.top, 8)
 
                 analysisCard
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                PlayerBar(title: "\(timestamp) 视频")
+                PlayerBar(title: L10n.videoTitle(timestamp: timestamp, language: languageStore.language))
 
                 GlimmerTabBar(active: .report)
             }
@@ -70,7 +72,7 @@ struct AnalyzingView: View {
                 // 省略号拼进同一个 Text：折行时跟在最后一个字后面，不再吊在整段文字右侧
                 TimelineView(.periodic(from: .now, by: 0.45)) { ctx in
                     let phase = Int(ctx.date.timeIntervalSinceReferenceDate / 0.45) % 4
-                    Text("分析需要一些时间，请勿离开当前页面，以免任务中断重来")
+                    Text(L10n.text(.analyzingMessage, language: languageStore.language))
                         + Text(String(repeating: ".", count: phase))
                 }
                 .font(.system(size: 14))
@@ -114,18 +116,9 @@ struct AnalyzingView: View {
     }
 
     /// User-facing behavior names in internal bit order.
-    static let featureNames: [String] = [
-        "缺乏或回避眼神接触",
-        "攻击行为",
-        "对感觉输入反应过度或不足",
-        "对言语互动缺乏回应",
-        "非典型语言",
-        "物体排列",
-        "自我击打或自伤行为",
-        "自我旋转或旋转物体",
-        "上肢刻板动作",
-        "背景（无明显目标行为）"
-    ]
+    static func featureNames(language: GlimmerLanguage) -> [String] {
+        AsdBehaviorParser.labels.map { $0.name(language: language) }
+    }
 }
 
 // MARK: - 流式行为列表（真滚动 + 上下渐变蒙版）
@@ -190,6 +183,8 @@ private struct StreamingBehaviorList: View {
 /// 接近 iPhone 17 Pro 上 Gemma3n 的实际 token 速率）。UI 自己按 900ms/项
 /// 节奏揭示，所以这里 sleep 多短都不影响视觉。
 struct AnalyzingDemoContainer: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     @State private var partial = ""
     @State private var streamDone = false
     @State private var showReport = false
@@ -201,7 +196,7 @@ struct AnalyzingDemoContainer: View {
 
     /// 从 demoCode 模板化结论（直接复用真实解析器，与 AsdBehaviorReport.conclusionText 完全一致）。
     private var demoConclusion: String {
-        AsdBehaviorParser.parse(demoCode)?.conclusionText ?? ""
+        AsdBehaviorParser.parse(demoCode)?.conclusionText(language: languageStore.language) ?? ""
     }
 
     var body: some View {
@@ -246,7 +241,9 @@ struct AnalyzingDemoContainer: View {
             demoResponding = false
             demoMessages.append(ExplanationChatMessage(
                 role: .assistant,
-                text: "视频里孩子反复把罐头叠高、排列，这类重复摆弄物品的动作是筛查里关注的线索之一。单段视频不一定很明显，建议结合更多日常场景观察。"
+                text: languageStore.language == .zh
+                    ? "视频里孩子反复把罐头叠高、排列，这类重复摆弄物品的动作是筛查里关注的线索之一。单段视频不一定很明显，建议结合更多日常场景观察。"
+                    : "In the video, the child repeatedly stacks and lines up cans. This kind of repeated object arrangement is one of the observable cues in the screening result. A single clip may not be obvious enough, so it is better to compare with more daily situations."
             ))
         }
     }

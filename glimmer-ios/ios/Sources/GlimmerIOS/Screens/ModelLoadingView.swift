@@ -1,16 +1,20 @@
 import SwiftUI
 
 struct ModelLoadingView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var progress: CGFloat = 0
     var downloadedBytes: Int64 = 0
     var totalBytes: Int64 = 0
     var title: String? = nil
 
     private var message: String {
-        title ?? "首次使用前，下载大模型权重中...\n下载完毕后无需联网，可离线使用"
+        title ?? L10n.text(.modelLoadingMessage, language: languageStore.language)
     }
 
-    private let foregroundNotice = "下载完成前请保持应用处于前台"
+    private var foregroundNotice: String {
+        L10n.text(.keepAppForeground, language: languageStore.language)
+    }
 
     private var percentText: String {
         "\(Int((max(0, min(1, progress)) * 100).rounded()))%"

@@ -9,12 +9,18 @@ final class AsdExplanationPromptsTests: XCTestCase {
         XCTAssertTrue(AsdExplanationPrompts.system.contains("音频"))
         XCTAssertFalse(AsdExplanationPrompts.system.contains("只返回 B01 到 B09 的 9 位二进制标签码"))
         XCTAssertFalse(AsdExplanationPrompts.system.contains("诊断"))
+        XCTAssertTrue(AsdExplanationPrompts.system(language: .en).contains("screening support"))
+        XCTAssertTrue(AsdExplanationPrompts.system(language: .en).contains("not a medical conclusion"))
+        XCTAssertFalse(AsdExplanationPrompts.system(language: .en).contains("9-bit binary code"))
     }
 
     func testExplanationUserPromptDoesNotAskForReclassification() {
         XCTAssertTrue(AsdExplanationPrompts.userInstruction.contains("同一段视频"))
         XCTAssertTrue(AsdExplanationPrompts.userInstruction.contains("不要重新输出 9 位二进制码"))
         XCTAssertTrue(AsdExplanationPrompts.userInstruction.contains("不要重新分类"))
+        XCTAssertTrue(AsdExplanationPrompts.userInstruction(language: .en).contains("same video"))
+        XCTAssertTrue(AsdExplanationPrompts.userInstruction(language: .en).contains("Do not output the 9-bit binary code again"))
+        XCTAssertTrue(AsdExplanationPrompts.userInstruction(language: .en).contains("do not reclassify"))
     }
 
     func testAssistantResultContextKeepsUserFacingSummaryOnly() throws {
@@ -29,5 +35,13 @@ final class AsdExplanationPromptsTests: XCTestCase {
         XCTAssertFalse(context.contains("true"))
         XCTAssertFalse(context.contains("false"))
         XCTAssertFalse(context.contains("诊断"))
+
+        let englishContext = AsdExplanationPrompts.assistantResultContext(report: report, language: .en)
+        XCTAssertTrue(englishContext.contains("Absence or avoidance of eye contact"))
+        XCTAssertTrue(englishContext.contains("Upper limb stereotypies"))
+        XCTAssertFalse(englishContext.contains("B01"))
+        XCTAssertFalse(englishContext.contains("B10"))
+        XCTAssertFalse(englishContext.contains("true"))
+        XCTAssertFalse(englishContext.contains("false"))
     }
 }

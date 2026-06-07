@@ -5,6 +5,8 @@ import SwiftUI
 /// 自适应布局：标题靠左、探头星星从右上探出；视频分析卡片撑满宽度；
 /// 隐私文案 + 底部 Tab 自然落在安全区内。
 struct HomeView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var onStart: () -> Void = {}
     var onSelectReport: () -> Void = {}
 
@@ -19,7 +21,7 @@ struct HomeView: View {
                 videoCard
                     .padding(.top, 24)
 
-                Text("放心录制分析均在本地，不会涉及隐私泄漏")
+                Text(L10n.text(.homePrivacy, language: languageStore.language))
                     .font(.system(size: 13))
                     .foregroundStyle(GTheme.subtle)
                     .padding(.top, 18)
@@ -39,7 +41,7 @@ struct HomeView: View {
     private var header: some View {
         ZStack(alignment: .topTrailing) {
             HStack {
-                Text("选择你要开始的\n分析方式")
+                Text(L10n.text(.homeTitle, language: languageStore.language))
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(GTheme.ink)
                     .lineSpacing(6)
@@ -76,14 +78,14 @@ struct HomeView: View {
                 // 底部信息行（64:445）
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("视频分析")
+                        Text(L10n.text(.videoAnalysis, language: languageStore.language))
                             .font(.system(size: 20, weight: .medium))
                             .foregroundStyle(GTheme.ink)
                             .lineLimit(1)
-                        Text("拍摄孩子的视频，通过本地模型进行分析")
+                        Text(L10n.text(.videoAnalysisSubtitle, language: languageStore.language))
                             .font(.system(size: 13))
                             .foregroundStyle(GTheme.subtle)
-                            .lineLimit(1)
+                            .lineLimit(2)
                     }
                     Spacer(minLength: 0)
                     // 64:450：竖直箭头旋 90° → 视觉向右指（播放感）

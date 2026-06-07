@@ -48,15 +48,44 @@ final class ReportConversationStoreTests: XCTestCase {
                 videoURL: videoURL,
                 videoDuration: "00:01",
                 report: report,
-                media: media
+                media: media,
+                language: .en
             )
             let storedMedia = store.media(for: record)
 
+            XCTAssertEqual(record.language, .en)
+            XCTAssertEqual(record.reportLanguage, .en)
+            XCTAssertTrue(record.conclusion.contains("did not observe clear behavior features"))
             XCTAssertEqual(record.videoFileName, "video.mov")
             XCTAssertTrue(FileManager.default.fileExists(atPath: storedMedia.videoURL.path))
             XCTAssertEqual(try Data(contentsOf: storedMedia.videoURL), videoData)
             XCTAssertEqual(storedMedia.frameURLs.count, 1)
             XCTAssertEqual(try XCTUnwrap(storedMedia.audioURL).lastPathComponent, "audio.wav")
         }
+    }
+
+    func testLegacyRecordWithoutLanguageDefaultsToChinese() throws {
+        let data = Data(
+            """
+            {
+              "id": "11111111-1111-1111-1111-111111111111",
+              "createdAt": 739324800,
+              "timestamp": "2026-06-06 19:00:00",
+              "videoTitle": "video.mov",
+              "videoDuration": "00:01",
+              "labelCode": "000000000",
+              "conclusion": "legacy",
+              "messages": [],
+              "videoFileName": "video.mov",
+              "frameFileNames": [],
+              "audioFileName": null
+            }
+            """.utf8
+        )
+
+        let record = try JSONDecoder().decode(ReportConversationRecord.self, from: data)
+
+        XCTAssertNil(record.language)
+        XCTAssertEqual(record.reportLanguage, .zh)
     }
 }

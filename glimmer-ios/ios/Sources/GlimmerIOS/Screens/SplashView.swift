@@ -5,6 +5,8 @@ import SwiftUI
 /// 自适应布局：奶油底铺满；光束贴底部全宽；吉祥物 + 字标在垂直中部成组；
 /// tagline 贴底（安全区内）。不依赖固定 375×812 画布。
 struct SplashView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var body: some View {
         ZStack {
             GTheme.splashBg.ignoresSafeArea()
@@ -37,7 +39,7 @@ struct SplashView: View {
                 Spacer()
 
                 // tagline（66:472）
-                Text("和“微光”一起关爱“星星的孩子”")
+                Text(L10n.text(.splashTagline, language: languageStore.language))
                     .font(.system(size: 14))
                     .tracking(0.2)
                     .foregroundStyle(GTheme.subtle)

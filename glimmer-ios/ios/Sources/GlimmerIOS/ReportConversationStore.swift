@@ -15,6 +15,7 @@ struct ReportConversationRecord: Codable, Identifiable, Equatable {
     let videoTitle: String
     let videoDuration: String
     let labelCode: String
+    let language: GlimmerLanguage?
     let conclusion: String
     var messages: [ExplanationChatMessage]
     let videoFileName: String
@@ -23,6 +24,10 @@ struct ReportConversationRecord: Codable, Identifiable, Equatable {
 
     var report: AsdBehaviorReport? {
         AsdBehaviorParser.parse(labelCode)
+    }
+
+    var reportLanguage: GlimmerLanguage {
+        language ?? .zh
     }
 }
 
@@ -71,7 +76,8 @@ final class ReportConversationStore {
         videoURL: URL,
         videoDuration: String,
         report: AsdBehaviorReport,
-        media: PreparedGgufMedia
+        media: PreparedGgufMedia,
+        language: GlimmerLanguage = .zh
     ) throws -> ReportConversationRecord {
         try ensureRootDirectory()
 
@@ -87,10 +93,11 @@ final class ReportConversationStore {
                 id: id,
                 createdAt: Date(),
                 timestamp: timestamp,
-                videoTitle: videoURL.lastPathComponent.isEmpty ? "视频" : videoURL.lastPathComponent,
+                videoTitle: videoURL.lastPathComponent.isEmpty ? L10n.defaultVideoTitle(language) : videoURL.lastPathComponent,
                 videoDuration: videoDuration,
                 labelCode: report.labelCode,
-                conclusion: report.conclusionText,
+                language: language,
+                conclusion: report.conclusionText(language: language),
                 messages: [],
                 videoFileName: videoFileName,
                 frameFileNames: frameFileNames,

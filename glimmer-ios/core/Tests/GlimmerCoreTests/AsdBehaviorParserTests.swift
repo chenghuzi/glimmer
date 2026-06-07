@@ -12,6 +12,8 @@ final class AsdBehaviorParserTests: XCTestCase {
         XCTAssertEqual(report.overall, "background")
         XCTAssertEqual(report.conclusionTitle, "未注意到明显自闭症倾向类型行为")
         XCTAssertTrue(report.conclusionText.contains("系统暂未观察到明显的可关注行为特征"))
+        XCTAssertEqual(report.conclusionTitle(language: .en), "No clear ASD-related behavior features observed")
+        XCTAssertTrue(report.conclusionText(language: .en).contains("did not observe clear behavior features"))
         XCTAssertTrue(report.conclusionText.contains("温馨提示"))
         XCTAssertTrue(report.conclusionText.contains("不构成医学诊断"))
         XCTAssertFalse(report.conclusionText.contains("B01"))
@@ -34,6 +36,9 @@ final class AsdBehaviorParserTests: XCTestCase {
         XCTAssertTrue(report.conclusionText.contains("系统识别到以下值得关注的行为特征"))
         XCTAssertTrue(report.conclusionText.contains("01｜缺乏或回避眼神接触"))
         XCTAssertTrue(report.conclusionText.contains("02｜上肢刻板动作"))
+        XCTAssertEqual(report.conclusionTitle(language: .en), "2 behavior features to note")
+        XCTAssertTrue(report.conclusionText(language: .en).contains("01｜Absence or avoidance of eye contact"))
+        XCTAssertTrue(report.conclusionText(language: .en).contains("02｜Upper limb stereotypies"))
         XCTAssertTrue(report.conclusionText.contains("结果说明"))
         XCTAssertFalse(report.conclusionText.contains("B01"))
         XCTAssertEqual(

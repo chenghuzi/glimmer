@@ -3,6 +3,8 @@ import SwiftUI
 /// 可视化壳的公共入口：按环境变量 `GLIMMER_SCREEN` 深链到单屏（注入 mock 数据）。
 /// 供 GlimmerGallery（仅模拟器）target 调用，专用于 visual loop 逐屏还原。
 public struct GalleryRoot: View {
+    @State private var languageStore = AppLanguageStore()
+
     public init() {}
 
     private var screen: String {
@@ -12,6 +14,12 @@ public struct GalleryRoot: View {
     }
 
     public var body: some View {
+        content
+            .environment(languageStore)
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch screen {
         case "flow":         AppRootView()
         case "splash":       SplashView()

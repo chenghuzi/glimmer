@@ -6,7 +6,7 @@ import GlimmerCore
 final class ScreeningService {
     var output: String = ""
     var isRunning: Bool = false
-    var statusText: String = "未加载"
+    var statusText: String = L10n.text(.notLoaded, language: .zh)
     var report: AsdBehaviorReport?
     var chatMessages: [ExplanationChatMessage] = []
     var isChatReady: Bool = false
@@ -16,19 +16,22 @@ final class ScreeningService {
     private let ownerID = UUID()
     private let runner = AsdGgufRunner.shared
     private var isClosed = false
+    private var language: GlimmerLanguage = .zh
 
-    func ensureLoaded() async throws {
+    func ensureLoaded(language: GlimmerLanguage) async throws {
+        self.language = language
         isClosed = false
-        statusText = "加载模型中…"
+        statusText = L10n.text(.loadingModel, language: language)
 
         try await runner.load(modelFiles: ModelCatalog.resolvedModelFiles(), ownerID: ownerID)
         try Task.checkCancellation()
-        statusText = "已就绪（本地 · 看 + 听）"
+        statusText = L10n.text(.readyLocalVisionAudio, language: language)
     }
 
     static let userInstruction = AsdGgufPrompts.userInstruction
 
-    func restore(report: AsdBehaviorReport, messages: [ExplanationChatMessage]) {
+    func restore(report: AsdBehaviorReport, messages: [ExplanationChatMessage], language: GlimmerLanguage) {
+        self.language = language
         self.report = report
         self.output = report.jsonString
         self.chatMessages = messages
@@ -37,8 +40,8 @@ final class ScreeningService {
         self.chatError = nil
     }
 
-    func analyze(frameURLs: [URL], audioURL: URL?, instruction: String) async throws {
-        try await ensureLoaded()
+    func analyze(frameURLs: [URL], audioURL: URL?, instruction: String, language: GlimmerLanguage) async throws {
+        try await ensureLoaded(language: language)
 
         isRunning = true
         output = ""
@@ -78,9 +81,9 @@ final class ScreeningService {
         initialMessages: [ExplanationChatMessage] = []
     ) async throws {
         guard let report else { return }
-        try await ensureLoaded()
+        try await ensureLoaded(language: language)
 
-        statusText = "准备本地对话…"
+        statusText = L10n.text(.preparingLocalChat, language: language)
         isChatReady = false
         isChatResponding = false
         chatError = nil
@@ -91,21 +94,23 @@ final class ScreeningService {
         let request = AsdGgufRequestBuilder.build(
             frameURLs: frameURLs,
             audioURL: supportsAudio ? audioURL : nil,
-            userPrompt: AsdExplanationPrompts.userInstruction
+            userPrompt: AsdExplanationPrompts.userInstruction(language: language)
         )
         try await runner.beginExplanationSession(
-            systemPrompt: AsdExplanationPrompts.system,
+            systemPrompt: AsdExplanationPrompts.system(language: language),
             request: request,
-            assistantContext: assistantContext(report: report, previousMessages: initialMessages),
+            assistantContext: assistantContext(report: report, previousMessages: initialMessages, language: language),
             ownerID: ownerID
         )
         try Task.checkCancellation()
         guard !isClosed else { return }
         isChatReady = true
-        statusText = "已就绪（本地 · 可对话）"
+        statusText = L10n.text(.readyLocalChat, language: language)
     }
 
-    func sendChatMessage(_ text: String) async {
+    func sendChatMessage(_ text: String, language: GlimmerLanguage? = nil) async {
+        let language = language ?? self.language
+        self.language = language
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, isChatReady, !isChatResponding else { return }
 
@@ -122,23 +127,24 @@ final class ScreeningService {
             chatMessages.append(
                 ExplanationChatMessage(
                     role: .assistant,
-                    text: answer.isEmpty ? "我暂时没有生成有效回答，请换个问法再试一次。" : answer
+                    text: answer.isEmpty ? L10n.text(.emptyAssistantReply, language: language) : answer
                 )
             )
         } catch {
-            let message = "对话出错：\(error.localizedDescription)"
+            let message = L10n.chatErrorMessage(detail: error.localizedDescription, language: language)
             chatError = message
             chatMessages.append(ExplanationChatMessage(role: .assistant, text: message, isError: true))
         }
     }
 
-    func shutdown() async {
+    func shutdown(language: GlimmerLanguage? = nil) async {
+        let language = language ?? self.language
         isClosed = true
         isRunning = false
         isChatReady = false
         isChatResponding = false
         await runner.shutdown(ownerID: ownerID)
-        statusText = "未加载"
+        statusText = L10n.text(.notLoaded, language: language)
     }
 
     static func assembleJSON(fromCode raw: String) -> String? {
@@ -147,9 +153,10 @@ final class ScreeningService {
 
     private func assistantContext(
         report: AsdBehaviorReport,
-        previousMessages: [ExplanationChatMessage]
+        previousMessages: [ExplanationChatMessage],
+        language: GlimmerLanguage
     ) -> String {
-        let baseContext = AsdExplanationPrompts.assistantResultContext(report: report)
+        let baseContext = AsdExplanationPrompts.assistantResultContext(report: report, language: language)
         let transcript = previousMessages
             .filter { !$0.isError }
             .map { message in

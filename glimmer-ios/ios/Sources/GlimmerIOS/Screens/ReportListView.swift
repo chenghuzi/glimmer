@@ -1,6 +1,9 @@
 import SwiftUI
+import GlimmerCore
 
 struct ReportListView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var store: ReportConversationStore
     var onOpen: (ReportConversationRecord) -> Void = { _ in }
     var onSelectAnalyze: () -> Void = {}
@@ -18,7 +21,7 @@ struct ReportListView: View {
                     recordsList
                 }
 
-                Text("分析与对话全程在设备本地完成")
+                Text(L10n.text(.localOnlyFootnote, language: languageStore.language))
                     .font(.system(size: 12, weight: .light))
                     .foregroundStyle(Color(hex: 0x666664))
                     .padding(.top, 4)
@@ -33,22 +36,45 @@ struct ReportListView: View {
 
     private var header: some View {
         HStack {
-            Text("报告")
+            Text(L10n.text(.reports, language: languageStore.language))
                 .font(.system(size: 24, weight: .semibold))
                 .foregroundStyle(GTheme.ink)
             Spacer()
+            languageToggle
         }
         .padding(.top, 68)
         .padding(.bottom, 18)
     }
 
+    private var languageToggle: some View {
+        HStack(spacing: 0) {
+            ForEach(GlimmerLanguage.allCases, id: \.self) { language in
+                Button {
+                    languageStore.setLanguage(language)
+                } label: {
+                    Text(L10n.languageToggleTitle(language))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(languageStore.language == language ? GTheme.onInk : GTheme.ink)
+                        .frame(width: 42, height: 30)
+                        .background(
+                            languageStore.language == language ? GTheme.ink : Color.clear,
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(GTheme.white.opacity(0.72), in: Capsule())
+    }
+
     private var emptyState: some View {
         VStack(spacing: 10) {
             Spacer()
-            Text("暂无分析报告")
+            Text(L10n.text(.noReports, language: languageStore.language))
                 .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(GTheme.ink)
-            Text("完成一次视频分析后，结果会显示在这里。")
+            Text(L10n.text(.noReportsMessage, language: languageStore.language))
                 .font(.system(size: 14, weight: .light))
                 .foregroundStyle(GTheme.subtle)
                 .multilineTextAlignment(.center)
@@ -70,7 +96,7 @@ struct ReportListView: View {
                         Button(role: .destructive) {
                             store.delete(record)
                         } label: {
-                            Label("删除", systemImage: "trash")
+                            Label(L10n.text(.delete, language: languageStore.language), systemImage: "trash")
                         }
                     }
             }
@@ -135,4 +161,5 @@ private struct ReportRow: View {
 
 #Preview {
     ReportListView(store: ReportConversationStore())
+        .environment(AppLanguageStore())
 }

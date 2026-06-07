@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct ReportHistoryDetailView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var store: ReportConversationStore
     let recordID: UUID
     var onBack: () -> Void = {}
@@ -29,7 +31,7 @@ struct ReportHistoryDetailView: View {
                 isResponding: service.isChatResponding,
                 chatError: service.chatError,
                 onSend: { text in
-                    Task { await service.sendChatMessage(text) }
+                    Task { await service.sendChatMessage(text, language: record.reportLanguage) }
                 },
                 onRetryChat: { retryChat(record: record) },
                 onBack: onBack,
@@ -40,7 +42,7 @@ struct ReportHistoryDetailView: View {
             .task(id: record.id) {
                 guard startedRecordID != record.id else { return }
                 startedRecordID = record.id
-                service.restore(report: report, messages: record.messages)
+                service.restore(report: report, messages: record.messages, language: record.reportLanguage)
                 await startChat(record: record)
             }
             .onChange(of: service.chatMessages) { _, messages in
@@ -48,7 +50,7 @@ struct ReportHistoryDetailView: View {
             }
             .onDisappear {
                 Task {
-                    await service.shutdown()
+                    await service.shutdown(language: record.reportLanguage)
                 }
             }
         } else {
@@ -60,10 +62,10 @@ struct ReportHistoryDetailView: View {
         ZStack {
             GTheme.bg.ignoresSafeArea()
             VStack(spacing: 20) {
-                GlimmerNavBar(title: "分析报告", onBack: onBack)
+                GlimmerNavBar(title: L10n.text(.analysisReport, language: languageStore.language), onBack: onBack)
                     .padding(.top, 8)
                 Spacer()
-                Text("这份报告已不存在")
+                Text(L10n.text(.missingReport, language: languageStore.language))
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(GTheme.ink)
                 Spacer()
@@ -79,8 +81,7 @@ struct ReportHistoryDetailView: View {
     private func startChat(record: ReportConversationRecord) async {
         let media = store.media(for: record)
         guard !media.frameURLs.isEmpty else {
-            // 历史记录的帧文件缺失（被清理/未拷全）→ 给出错态而非无限转圈
-            service.chatError = "原始视频画面已不可用，无法重建本地对话。"
+            service.chatError = L10n.text(.missingHistoryFrames, language: record.reportLanguage)
             return
         }
         let maxChatAutoRetries = 1
@@ -97,7 +98,7 @@ struct ReportHistoryDetailView: View {
                 return
             } catch {
                 guard attempt < maxChatAutoRetries, !Task.isCancelled else {
-                    service.chatError = "本地对话初始化失败：\(error.localizedDescription)"
+                    service.chatError = L10n.localChatInitFailure(detail: error.localizedDescription, language: record.reportLanguage)
                     return
                 }
                 attempt += 1

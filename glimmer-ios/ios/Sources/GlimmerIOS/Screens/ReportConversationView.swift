@@ -8,8 +8,10 @@ import AVKit
 /// - 对话区由外部 `messages` 驱动（chenghuzi 的本地解释对话）；初始为空，用户提问后出现。
 /// - 输入框在 `isChatReady` 前禁用（模型正在把视频灌进 KV-cache）。
 struct ReportConversationView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var timestamp: String = "2026-06-03 12:12:12"
-    var videoTitle: String = "视频"
+    var videoTitle: String = ""
     var videoURL: URL?
     var videoDuration: String = "00:00"
     var conclusion: String
@@ -54,9 +56,13 @@ struct ReportConversationView: View {
     }
 
     private var inputPlaceholder: String {
-        if isChatReady { return "可以和我聊聊" }
-        if chatError != nil { return "对话初始化失败，点右侧重试" }
-        return "正在准备本地对话…"
+        if isChatReady { return L10n.text(.chatReadyPlaceholder, language: languageStore.language) }
+        if chatError != nil { return L10n.text(.chatFailedPlaceholder, language: languageStore.language) }
+        return L10n.text(.chatPreparingPlaceholder, language: languageStore.language)
+    }
+
+    private var displayVideoTitle: String {
+        videoTitle.isEmpty ? L10n.defaultVideoTitle(languageStore.language) : videoTitle
     }
 
     private var nonAnimatedMessageToken: String {
@@ -75,7 +81,7 @@ struct ReportConversationView: View {
                     VStack(alignment: .leading, spacing: 20) {
                         conclusionCard
                         PlayerBar(
-                            title: "\(timestamp) \(videoTitle)",
+                            title: "\(timestamp) \(displayVideoTitle)",
                             duration: videoDuration,
                             onPlay: {
                                 guard let videoURL else { return }
@@ -104,7 +110,7 @@ struct ReportConversationView: View {
 
             // 顶部 nav（带不透明背景，遮住下方滚动内容，避免叠字）
             VStack(spacing: 0) {
-                GlimmerNavBar(title: "\(timestamp) 分析报告", onBack: onBack)
+                GlimmerNavBar(title: L10n.analysisReportTitle(timestamp: timestamp, language: languageStore.language), onBack: onBack)
                     .padding(.top, 8)
                     .padding(.bottom, 6)
                     .background(GTheme.bg)
@@ -119,7 +125,7 @@ struct ReportConversationView: View {
                 chatInputBar
                     .padding(.horizontal, 16)
                 if !inputFocused {
-                    Text("分析与对话全程在设备本地完成")
+                    Text(L10n.text(.localOnlyFootnote, language: languageStore.language))
                         .font(.system(size: 12, weight: .light))
                         .foregroundStyle(Color(hex: 0x666664))
                     GlimmerTabBar(active: .report, onSelect: onSelectTab)
@@ -180,7 +186,7 @@ struct ReportConversationView: View {
     private var conclusionCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("报告结论")
+                Text(L10n.text(.reportConclusion, language: languageStore.language))
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(GTheme.ink)
                     .tracking(0.2)
@@ -199,7 +205,7 @@ struct ReportConversationView: View {
 
             HStack {
                 Spacer()
-                Text("本结果仅作早期信号提示，请结合日常观察判断")
+                Text(L10n.text(.reportFootnote, language: languageStore.language))
                     .font(.system(size: 12, weight: .light))
                     .foregroundStyle(Color(hex: 0x666664))
                     .tracking(0.12)
@@ -240,7 +246,7 @@ struct ReportConversationView: View {
 
     private var typingIndicator: some View {
         HStack(spacing: 0) {
-            Text("正在思考")
+            Text(L10n.text(.thinking, language: languageStore.language))
             AnimatedThinkingDots()
         }
         .font(.system(size: 16, weight: .light))
@@ -374,4 +380,5 @@ private struct FullscreenVideoPreview: View {
         ],
         isChatReady: true
     )
+    .environment(AppLanguageStore())
 }

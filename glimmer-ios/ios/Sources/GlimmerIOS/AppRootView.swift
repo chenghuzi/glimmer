@@ -11,6 +11,8 @@ public struct AppRootView: View {
 
     private static let logger = Logger(subsystem: "cn.enactflow.glimmer", category: "ModelDownload")
 
+    @Environment(AppLanguageStore.self) private var languageStore
+
     private enum Phase { case splash, selectRegion, loading, main, needFullInstall }
     @State private var phase: Phase = .splash
     @State private var downloader = ModelDownloadManager()
@@ -36,7 +38,7 @@ public struct AppRootView: View {
                     progress: preparingFromBundle ? prepareProgress : downloader.progress,
                     downloadedBytes: preparingFromBundle ? 0 : downloader.downloadedBytes,
                     totalBytes: preparingFromBundle ? 0 : downloader.totalBytes,
-                    title: preparingFromBundle ? "首次启动，正在准备本地模型…" : nil
+                    title: preparingFromBundle ? L10n.text(.prepareBundledModel, language: languageStore.language) : nil
                 )
                 .transition(.opacity)
             case .main:
@@ -101,10 +103,10 @@ public struct AppRootView: View {
                 if case .failed(let detail) = downloader.phase {
                     reason = detail
                 } else {
-                    reason = "未知原因"
+                    reason = L10n.text(.unknownReason, language: languageStore.language)
                 }
                 Self.logger.error("model download failed [\(region.rawValue, privacy: .public)]: \(reason, privacy: .public)")
-                regionSelectionMessage = "下载未完成：\(reason)"
+                regionSelectionMessage = L10n.downloadFailureMessage(reason: reason, language: languageStore.language)
                 phase = .selectRegion
             }
         }
@@ -129,6 +131,8 @@ struct IdentifiableURL: Identifiable {
 
 /// 主界面的流程：HomeView →（点卡片）系统来源选择器(拍摄/相册) → 拍完确认弹窗 → AnalyzingView → ReportView
 struct MainFlow: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     @State private var activeTab: GlimmerTab = .analyze
     @State private var selectedReportID: UUID?
     @State private var reportStore = ReportConversationStore()
@@ -215,9 +219,9 @@ struct MainFlow: View {
             reportStore.load()
         }
 #if os(iOS)
-        .confirmationDialog("选择视频来源", isPresented: $showSourceSheet, titleVisibility: .hidden) {
+        .confirmationDialog(L10n.text(.chooseVideoSource, language: languageStore.language), isPresented: $showSourceSheet, titleVisibility: .hidden) {
             if cameraAvailable {
-                Button("拍摄视频") {
+                Button(L10n.text(.recordVideo, language: languageStore.language)) {
                     // 等 sheet 完全消失再弹 cover，避免 UIKit modal 冲突
                     Task {
                         try? await Task.sleep(for: .milliseconds(350))
@@ -225,13 +229,13 @@ struct MainFlow: View {
                     }
                 }
             }
-            Button("从相册选择") {
+            Button(L10n.text(.chooseFromLibrary, language: languageStore.language)) {
                 Task {
                     try? await Task.sleep(for: .milliseconds(350))
                     showLibrary = true
                 }
             }
-            Button("取消", role: .cancel) {}
+            Button(L10n.text(.cancel, language: languageStore.language), role: .cancel) {}
         }
         .fullScreenCover(isPresented: $showLibrary) {
             VideoPicker { url in

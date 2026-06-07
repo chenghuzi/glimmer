@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import GlimmerCore
 
 /// 视频选好后的分析流程：预处理 → 9 位 code 分类（真实推理）→ 报告 + 本地解释对话。
 ///
@@ -12,12 +13,14 @@ struct AnalysisFlowView: View {
     let videoURL: URL
     var reportStore: ReportConversationStore? = nil
 
+    @Environment(AppLanguageStore.self) private var languageStore
     @Environment(\.dismiss) private var dismiss
     @State private var service = ScreeningService()
     @State private var started = false
     @State private var showReport = false
     @State private var chatPrefillRequested = false
     @State private var reportRecordID: UUID?
+    @State private var reportLanguage: GlimmerLanguage?
     @State private var videoDuration: String = "00:00"
     /// 预处理产物留存，供报告页开启解释对话时复用。
     @State private var media: PreparedGgufMedia?
@@ -31,20 +34,24 @@ struct AnalysisFlowView: View {
     /// 模型分类完成 = report 已解析出来（或出错文案已就绪）。
     private var streamFinished: Bool { service.report != nil || !service.output.isEmpty }
 
+    private var activeReportLanguage: GlimmerLanguage {
+        reportLanguage ?? languageStore.language
+    }
+
     var body: some View {
         ZStack {
             if showReport {
                 ReportConversationView(
                     timestamp: timestamp,
-                    videoTitle: videoURL.lastPathComponent.isEmpty ? "视频" : videoURL.lastPathComponent,
+                    videoTitle: videoURL.lastPathComponent.isEmpty ? L10n.defaultVideoTitle(activeReportLanguage) : videoURL.lastPathComponent,
                     videoURL: videoURL,
                     videoDuration: videoDuration,
-                    conclusion: service.report?.conclusionText ?? service.output,
+                    conclusion: service.report?.conclusionText(language: activeReportLanguage) ?? service.output,
                     messages: service.chatMessages,
                     isChatReady: service.isChatReady,
                     isResponding: service.isChatResponding,
                     chatError: service.chatError,
-                    onSend: { text in Task { await service.sendChatMessage(text) } },
+                    onSend: { text in Task { await service.sendChatMessage(text, language: activeReportLanguage) } },
                     onRetryChat: retryChat,
                     onBack: { dismiss() },
                     onSelectTab: { tab in
@@ -85,29 +92,32 @@ struct AnalysisFlowView: View {
         }
         .onDisappear {
             Task {
-                await service.shutdown()
+                await service.shutdown(language: activeReportLanguage)
             }
         }
     }
 
     private func run() async {
+        let language = languageStore.language
+        reportLanguage = language
         let prepared = await VideoAudioPreprocessor.prepare(videoURL: videoURL)
         guard !Task.isCancelled else { return }
         media = prepared
         guard !prepared.frameURLs.isEmpty else {
-            service.output = "无法从视频中提取画面，请换一段视频重试。"
+            service.output = L10n.text(.noVideoFrames, language: language)
             return
         }
         do {
             try await service.analyze(
                 frameURLs: prepared.frameURLs,
                 audioURL: prepared.audioURL,
-                instruction: ScreeningService.userInstruction
+                instruction: ScreeningService.userInstruction,
+                language: language
             )
             guard !Task.isCancelled else { return }
         } catch {
             guard !Task.isCancelled else { return }
-            service.output = "出错：\(error.localizedDescription)"
+            service.output = L10n.genericError(detail: error.localizedDescription, language: language)
         }
     }
 
@@ -129,7 +139,7 @@ struct AnalysisFlowView: View {
                 return  // 视图消失/任务取消，不算失败、不重试
             } catch {
                 guard attempt < maxChatAutoRetries, !Task.isCancelled else {
-                    service.chatError = "本地对话初始化失败：\(error.localizedDescription)"
+                    service.chatError = L10n.localChatInitFailure(detail: error.localizedDescription, language: activeReportLanguage)
                     return
                 }
                 attempt += 1
@@ -154,7 +164,8 @@ struct AnalysisFlowView: View {
                 videoURL: videoURL,
                 videoDuration: videoDuration,
                 report: report,
-                media: media
+                media: media,
+                language: activeReportLanguage
             )
             reportRecordID = record.id
         } catch {

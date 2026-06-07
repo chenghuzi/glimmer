@@ -3,6 +3,8 @@ import SwiftUI
 /// macOS Lite 更新版在本机检测不到已播种模型时显示。
 /// 不走下载兜底：让用户先装一次「完整安装包」（首发版会把模型一次性放好）。
 struct NeedFullInstallView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var body: some View {
         ZStack {
             GTheme.bg.ignoresSafeArea()
@@ -15,12 +17,12 @@ struct NeedFullInstallView: View {
                     .scaledToFit()
                     .frame(width: 214)
 
-                Text("需要先安装完整版")
+                Text(L10n.text(.needFullInstallTitle, language: languageStore.language))
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(GTheme.ink)
                     .padding(.top, 32)
 
-                Text("当前是更新包（不含模型权重）。\n请先安装一次完整安装包（约 6 GB），\n模型会自动放好；之后再装本更新版即可立即使用。")
+                Text(L10n.text(.needFullInstallMessage, language: languageStore.language))
                     .font(.system(size: 13, weight: .regular))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(GTheme.inkSecondary)
@@ -32,7 +34,7 @@ struct NeedFullInstallView: View {
                     NSApplication.shared.terminate(nil)
                     #endif
                 } label: {
-                    Text("退出")
+                    Text(L10n.text(.quit, language: languageStore.language))
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(GTheme.onInk)
                         .frame(minWidth: 120, minHeight: 38)

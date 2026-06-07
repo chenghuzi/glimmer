@@ -1,11 +1,14 @@
 import SwiftUI
+import GlimmerCore
 
 struct ModelDownloadRegionSelectionView: View {
+    @Environment(AppLanguageStore.self) private var languageStore
+
     var message: String?
     var onSelect: (ModelDownloadRegion) -> Void
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topTrailing) {
             GTheme.bg.ignoresSafeArea()
 
             VStack(spacing: 0) {
@@ -16,9 +19,10 @@ struct ModelDownloadRegionSelectionView: View {
                     .scaledToFit()
                     .frame(width: 214)
 
-                Text("选择模型下载区域")
+                Text(L10n.text(.selectModelDownloadRegion, language: languageStore.language))
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundStyle(GTheme.ink)
+                    .multilineTextAlignment(.center)
                     .padding(.top, 42)
 
                 VStack(spacing: 14) {
@@ -39,7 +43,33 @@ struct ModelDownloadRegionSelectionView: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 32)
+
+            languageToggle
+                .padding(.top, 16)
+                .padding(.trailing, 20)
         }
+    }
+
+    private var languageToggle: some View {
+        HStack(spacing: 0) {
+            ForEach(GlimmerLanguage.allCases, id: \.self) { language in
+                Button {
+                    languageStore.setLanguage(language)
+                } label: {
+                    Text(L10n.languageToggleTitle(language))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(languageStore.language == language ? GTheme.onInk : GTheme.ink)
+                        .frame(width: 42, height: 30)
+                        .background(
+                            languageStore.language == language ? GTheme.ink : Color.clear,
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(GTheme.white.opacity(0.72), in: Capsule())
     }
 
     private func regionButton(_ region: ModelDownloadRegion) -> some View {
@@ -47,7 +77,7 @@ struct ModelDownloadRegionSelectionView: View {
             onSelect(region)
         } label: {
             HStack {
-                Text(region.title)
+                Text(L10n.regionTitle(region, language: languageStore.language))
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(GTheme.ink)
                 Spacer(minLength: 0)
