@@ -16,6 +16,7 @@ struct AnalysisFlowView: View {
     @State private var service = ScreeningService()
     @State private var started = false
     @State private var showReport = false
+    @State private var chatPrefillRequested = false
     @State private var reportRecordID: UUID?
     @State private var videoDuration: String = "00:00"
     /// 预处理产物留存，供报告页开启解释对话时复用。
@@ -56,7 +57,7 @@ struct AnalysisFlowView: View {
                         guard !showReport else { return }
                         persistReportIfNeeded()
                         showReport = true
-                        Task { await startChat() }
+                        chatPrefillRequested = true
                     }
                 )
             }
@@ -64,17 +65,29 @@ struct AnalysisFlowView: View {
         .task {
             guard !started else { return }
             started = true
-            Task { videoDuration = await Self.readDuration(videoURL) }
             await run()
+        }
+        .task(id: videoURL) {
+            videoDuration = await Self.readDuration(videoURL)
+        }
+        .task(id: chatPrefillRequested) {
+            guard chatPrefillRequested else { return }
+            await startChat()
         }
         .onChange(of: service.chatMessages) { _, messages in
             guard let reportRecordID else { return }
             reportStore?.updateMessages(recordID: reportRecordID, messages: messages)
         }
+        .onDisappear {
+            Task {
+                await service.shutdown()
+            }
+        }
     }
 
     private func run() async {
         let prepared = await VideoAudioPreprocessor.prepare(videoURL: videoURL)
+        guard !Task.isCancelled else { return }
         media = prepared
         guard !prepared.frameURLs.isEmpty else {
             service.output = "无法从视频中提取画面，请换一段视频重试。"
@@ -86,7 +99,9 @@ struct AnalysisFlowView: View {
                 audioURL: prepared.audioURL,
                 instruction: ScreeningService.userInstruction
             )
+            guard !Task.isCancelled else { return }
         } catch {
+            guard !Task.isCancelled else { return }
             service.output = "出错：\(error.localizedDescription)"
         }
     }

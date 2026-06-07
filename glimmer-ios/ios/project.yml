@@ -71,13 +71,32 @@ targets:
         # Large on-device inference needs the higher memory entitlement.
         CODE_SIGN_ENTITLEMENTS: Gallery/GlimmerGallery.entitlements
         OTHER_LDFLAGS: -all_load
+
+  GlimmerIOSTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - Tests/GlimmerIOSTests
+    dependencies:
+      - package: GlimmerIOS
+        product: GlimmerIOS
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        GENERATE_INFOPLIST_FILE: true
 schemes:
   GemmaScreen:
     build:
       targets:
         GemmaScreen: all
+        GlimmerIOSTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - GlimmerIOSTests
     archive:
       config: Release
   GlimmerGallery:
