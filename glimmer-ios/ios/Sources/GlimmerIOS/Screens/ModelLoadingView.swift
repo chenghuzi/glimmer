@@ -3,7 +3,8 @@ import SwiftUI
 struct ModelLoadingView: View {
     var progress: CGFloat = 0
 
-    private let message = "首次使用前，加载大模型权重中...\n加载完毕后无需联网，可离线使用"
+    private let message = "首次使用前，下载大模型权重中...\n下载完毕后无需联网，可离线使用"
+    private let foregroundNotice = "下载完成前请保持应用处于前台"
 
     var body: some View {
         ZStack {
@@ -18,6 +19,12 @@ struct ModelLoadingView: View {
                     .lineSpacing(7)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(GTheme.inkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(foregroundNotice)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(GTheme.subtle)
+                    .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.horizontal, 32)

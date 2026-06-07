@@ -3,6 +3,15 @@ import Foundation
 enum ModelDownloadRegion: String, Codable, Equatable {
     case china
     case global
+
+    var title: String {
+        switch self {
+        case .china:
+            return "国内"
+        case .global:
+            return "国外"
+        }
+    }
 }
 
 enum ModelDownloadError: LocalizedError {
@@ -22,101 +31,22 @@ enum ModelDownloadError: LocalizedError {
     }
 }
 
-private struct ModelDownloadRegionResolver {
-    private struct Cache: Codable {
-        let region: ModelDownloadRegion
-        let checkedAt: Date
-    }
-
+enum ModelDownloadRegionPreference {
     private enum Constants {
-        static let cacheKey = "GlimmerModelDownloadRegion"
-        static let cacheTTL: TimeInterval = 24 * 60 * 60
-        static let timeout: TimeInterval = 8
-        static let endpoints = [
-            URL(string: "https://api.country.is/")!,
-            URL(string: "https://www.cloudflare.com/cdn-cgi/trace")!,
-            URL(string: "https://ipapi.co/country/")!
-        ]
+        static let key = "GlimmerModelDownloadRegionPreference"
     }
 
-    func preferredRegion() async -> ModelDownloadRegion {
-        if let cached = cachedRegion(), Date().timeIntervalSince(cached.checkedAt) < Constants.cacheTTL {
-            return cached.region
-        }
-
-        for endpoint in Constants.endpoints {
-            if let region = await resolveRegion(from: endpoint) {
-                save(region)
-                return region
-            }
-        }
-
-        let fallback = Locale.current.region?.identifier.uppercased() == "CN"
-            ? ModelDownloadRegion.china
-            : ModelDownloadRegion.global
-        save(fallback)
-        return fallback
+    static func savedRegion() -> ModelDownloadRegion? {
+        guard let value = UserDefaults.standard.string(forKey: Constants.key) else { return nil }
+        return ModelDownloadRegion(rawValue: value)
     }
 
-    private func resolveRegion(from endpoint: URL) async -> ModelDownloadRegion? {
-        var request = URLRequest(url: endpoint)
-        request.timeoutInterval = Constants.timeout
-
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = Constants.timeout
-        configuration.timeoutIntervalForResource = Constants.timeout
-
-        do {
-            let (data, response) = try await URLSession(configuration: configuration).data(for: request)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                return nil
-            }
-            let body = String(decoding: data, as: UTF8.self)
-            return parseRegion(body)
-        } catch {
-            return nil
-        }
+    static func save(_ region: ModelDownloadRegion) {
+        UserDefaults.standard.set(region.rawValue, forKey: Constants.key)
     }
 
-    private func parseRegion(_ body: String) -> ModelDownloadRegion? {
-        if let data = body.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let country = object["country"] as? String {
-            return region(countryCode: country)
-        }
-
-        for line in body.split(whereSeparator: \.isNewline) {
-            let value = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            if value.count == 2 {
-                return region(countryCode: value)
-            }
-            if value.hasPrefix("loc=") {
-                return region(countryCode: String(value.dropFirst(4)))
-            }
-        }
-
-        return nil
-    }
-
-    private func region(countryCode: String) -> ModelDownloadRegion {
-        countryCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() == "CN"
-            ? .china
-            : .global
-    }
-
-    private func cachedRegion() -> Cache? {
-        guard let data = UserDefaults.standard.data(forKey: Constants.cacheKey) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(Cache.self, from: data)
-    }
-
-    private func save(_ region: ModelDownloadRegion) {
-        let cache = Cache(region: region, checkedAt: Date())
-        guard let data = try? JSONEncoder().encode(cache) else {
-            return
-        }
-        UserDefaults.standard.set(data, forKey: Constants.cacheKey)
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: Constants.key)
     }
 }
 
@@ -141,7 +71,7 @@ final class ModelDownloadManager {
         ModelCatalog.allFilesTrusted()
     }
 
-    func start() async {
+    func start(region: ModelDownloadRegion) async {
         guard phase != .downloading else {
             return
         }
@@ -152,13 +82,14 @@ final class ModelDownloadManager {
             return
         }
 
+        progress = 0
         phase = .downloading
         do {
             try FileManager.default.createDirectory(
                 at: ModelCatalog.directory,
                 withIntermediateDirectories: true
             )
-            try await prepareModels()
+            try await prepareModels(region: region)
             progress = 1
             phase = .ready
         } catch {
@@ -166,11 +97,10 @@ final class ModelDownloadManager {
         }
     }
 
-    private func prepareModels() async throws {
+    private func prepareModels(region: ModelDownloadRegion) async throws {
         let items = ModelCatalog.items
         let totalBytes = max(items.reduce(Int64(0)) { $0 + $1.byteSize }, 1)
         var completedBytes: Int64 = 0
-        let region = await ModelDownloadRegionResolver().preferredRegion()
 
         for item in items {
             if try await ModelCatalog.validateExistingFileIfNeeded(item) {
