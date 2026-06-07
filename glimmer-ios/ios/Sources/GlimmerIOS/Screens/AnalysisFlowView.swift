@@ -43,7 +43,9 @@ struct AnalysisFlowView: View {
                     messages: service.chatMessages,
                     isChatReady: service.isChatReady,
                     isResponding: service.isChatResponding,
+                    chatError: service.chatError,
                     onSend: { text in Task { await service.sendChatMessage(text) } },
+                    onRetryChat: retryChat,
                     onBack: { dismiss() },
                     onSelectTab: { tab in
                         if tab == .analyze { dismiss() }
@@ -76,6 +78,7 @@ struct AnalysisFlowView: View {
             guard chatPrefillRequested else { return }
             await startChat()
         }
+        .keepScreenAwake(!showReport || service.isChatResponding)
         .onChange(of: service.chatMessages) { _, messages in
             guard let reportRecordID else { return }
             reportStore?.updateMessages(recordID: reportRecordID, messages: messages)
@@ -109,17 +112,38 @@ struct AnalysisFlowView: View {
     }
 
     /// 进报告页后，把同一段媒体 + 筛查结果灌进模型，开启本地解释对话。
+    /// 失败先自动重试 `maxChatAutoRetries` 次（兜瞬时失败，如临时内存压力）；
+    /// 仍失败才落到 chatError，由 UI 显示「重试」按钮交给用户手动触发。
     private func startChat() async {
         guard let media, service.report != nil, !service.isChatReady else { return }
-        do {
-            try await service.beginExplanationChat(
-                frameURLs: media.frameURLs,
-                audioURL: media.audioURL
-            )
-        } catch {
-            // 对话开启失败不阻塞报告展示，仅留出错状态
-            service.chatError = "本地对话初始化失败：\(error.localizedDescription)"
+        let maxChatAutoRetries = 1
+        var attempt = 0
+        while true {
+            do {
+                try await service.beginExplanationChat(
+                    frameURLs: media.frameURLs,
+                    audioURL: media.audioURL
+                )
+                return
+            } catch is CancellationError {
+                return  // 视图消失/任务取消，不算失败、不重试
+            } catch {
+                guard attempt < maxChatAutoRetries, !Task.isCancelled else {
+                    service.chatError = "本地对话初始化失败：\(error.localizedDescription)"
+                    return
+                }
+                attempt += 1
+                try? await Task.sleep(for: .seconds(1))
+                guard !Task.isCancelled else { return }
+            }
         }
+    }
+
+    /// 用户点「重试」：清掉错误态，重新跑一次对话初始化（含自动重试）。
+    private func retryChat() {
+        guard !service.isChatReady else { return }
+        service.chatError = nil
+        Task { await startChat() }
     }
 
     private func persistReportIfNeeded() {
