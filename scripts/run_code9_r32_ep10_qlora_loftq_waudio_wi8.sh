@@ -45,7 +45,7 @@ LITERT_CACHE_LENGTH="${LITERT_CACHE_LENGTH:-4096}"
 
 S3_URI="${S3_URI:-s3://huzi-nydata/asd-gemma4-code9-qlora-loftq-ep10-wi8-waudio.litertlm}"
 
-BARK_URL="${BARK_URL:-https://api.day.app/7GofcjfmCvWZqvfrvYuFV}"
+BARK_URL="${BARK_URL:-}"
 BARK_GROUP="${BARK_GROUP:-hz_res_ft}"
 LOG_PATH="${LOG_PATH:-}"
 STAGE="init"

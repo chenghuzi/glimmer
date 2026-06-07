@@ -40,7 +40,7 @@ EVAL_DIR="${EVAL_DIR:-${LITERT_OUT_DIR}/generated_metrics_audio}"
 MEDIA_CACHE_DIR="${MEDIA_CACHE_DIR:-${LITERT_OUT_DIR}/media_cache_audio}"
 LITERT_RUNTIME_CACHE_DIR="${LITERT_RUNTIME_CACHE_DIR:-${LITERT_OUT_DIR}/litert_cache_audio}"
 
-BARK_URL="${BARK_URL:-https://api.day.app/7GofcjfmCvWZqvfrvYuFV}"
+BARK_URL="${BARK_URL:-}"
 BARK_GROUP="${BARK_GROUP:-hz_res_ft}"
 LOG_PATH="${LOG_PATH:-}"
 OVERWRITE="${OVERWRITE:-1}"

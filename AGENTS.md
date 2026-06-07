@@ -21,6 +21,7 @@ uv add <package>
 - Keep generated artifacts under `outputs/`; this path is gitignored.
 - This project is screening support for observable behavior labels, not an ASD diagnostic system. Do not introduce wording that claims diagnosis.
 - Preserve the train/validation/test boundary. Use validation during training; use test only for final reporting.
+- iOS 本地报告记录 schema 不做旧版本兼容，除非用户明确要求兼容旧记录；可以让旧本地记录失效，以保持实现简单。
 
 ## Important Local Paths
 
@@ -41,7 +42,7 @@ For long-running local experiments, send completion/failure notifications throug
 
 ```bash
 curl -fsS --get \
-  "https://api.day.app/7GofcjfmCvWZqvfrvYuFV/Codex%20run%20finished/Replace%20this%20with%20the%20run%20summary." \
+  "${BARK_URL:?Set BARK_URL to your Bark endpoint}/Codex%20run%20finished/Replace%20this%20with%20the%20run%20summary." \
   --data-urlencode "group=hz_res_ft" \
   --data-urlencode "isArchive=1"
 ```

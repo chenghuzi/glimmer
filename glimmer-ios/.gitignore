@@ -18,6 +18,8 @@ ml/models/
 data/sample/images/*.jpg
 
 # iOS / Xcode
+ios/.env
+ios/GemmaScreen.xcodeproj/
 ios/build/
 ios/build-device/
 ios/DerivedData/

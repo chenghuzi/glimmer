@@ -13,28 +13,29 @@ final class ScreeningService {
     var isChatResponding: Bool = false
     var chatError: String?
 
-    private let modelResource = "model-Q4_K_M"
-    private let mmprojResource = "mmproj-bf16"
-    private let runner = AsdGgufRunner()
-    private var loaded = false
+    private let ownerID = UUID()
+    private let runner = AsdGgufRunner.shared
+    private var isClosed = false
 
     func ensureLoaded() async throws {
-        if loaded { return }
+        isClosed = false
         statusText = "加载模型中…"
 
-        guard let modelURL = Bundle.main.url(forResource: modelResource, withExtension: "gguf") else {
-            throw AsdGgufRunnerError.missingModel
-        }
-        guard let mmprojURL = Bundle.main.url(forResource: mmprojResource, withExtension: "gguf") else {
-            throw AsdGgufRunnerError.missingMmproj
-        }
-
-        try await runner.load(modelFiles: AsdGgufModelFiles(modelURL: modelURL, mmprojURL: mmprojURL))
-        loaded = true
+        try await runner.load(modelFiles: ModelCatalog.resolvedModelFiles(), ownerID: ownerID)
+        try Task.checkCancellation()
         statusText = "已就绪（本地 · 看 + 听）"
     }
 
     static let userInstruction = AsdGgufPrompts.userInstruction
+
+    func restore(report: AsdBehaviorReport, messages: [ExplanationChatMessage]) {
+        self.report = report
+        self.output = report.jsonString
+        self.chatMessages = messages
+        self.isChatReady = false
+        self.isChatResponding = false
+        self.chatError = nil
+    }
 
     func analyze(frameURLs: [URL], audioURL: URL?, instruction: String) async throws {
         try await ensureLoaded()
@@ -46,16 +47,23 @@ final class ScreeningService {
         isChatReady = false
         isChatResponding = false
         chatError = nil
-        await runner.invalidateExplanationSession()
+        await runner.invalidateExplanationSession(ownerID: ownerID)
         defer { isRunning = false }
 
+        let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
         let request = AsdGgufRequestBuilder.build(
             frameURLs: frameURLs,
-            audioURL: audioURL,
+            audioURL: supportsAudio ? audioURL : nil,
             userPrompt: instruction
         )
-        let code = try await runner.generate(systemPrompt: AsdGgufPrompts.system, request: request)
+        let code = try await runner.generate(
+            systemPrompt: AsdGgufPrompts.system,
+            request: request,
+            ownerID: ownerID
+        )
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        try Task.checkCancellation()
+        guard !isClosed else { return }
         if let parsed = AsdBehaviorParser.parse(code) {
             report = parsed
             output = parsed.jsonString
@@ -64,7 +72,11 @@ final class ScreeningService {
         }
     }
 
-    func beginExplanationChat(frameURLs: [URL], audioURL: URL?) async throws {
+    func beginExplanationChat(
+        frameURLs: [URL],
+        audioURL: URL?,
+        initialMessages: [ExplanationChatMessage] = []
+    ) async throws {
         guard let report else { return }
         try await ensureLoaded()
 
@@ -72,18 +84,23 @@ final class ScreeningService {
         isChatReady = false
         isChatResponding = false
         chatError = nil
-        chatMessages = []
+        chatMessages = initialMessages
 
+        await runner.invalidateExplanationSession(ownerID: ownerID)
+        let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
         let request = AsdGgufRequestBuilder.build(
             frameURLs: frameURLs,
-            audioURL: audioURL,
+            audioURL: supportsAudio ? audioURL : nil,
             userPrompt: AsdExplanationPrompts.userInstruction
         )
         try await runner.beginExplanationSession(
             systemPrompt: AsdExplanationPrompts.system,
             request: request,
-            assistantContext: AsdExplanationPrompts.assistantResultContext(report: report)
+            assistantContext: assistantContext(report: report, previousMessages: initialMessages),
+            ownerID: ownerID
         )
+        try Task.checkCancellation()
+        guard !isClosed else { return }
         isChatReady = true
         statusText = "已就绪（本地 · 可对话）"
     }
@@ -98,8 +115,10 @@ final class ScreeningService {
         defer { isChatResponding = false }
 
         do {
-            let answer = try await runner.sendExplanationMessage(question)
+            let answer = try await runner.sendExplanationMessage(question, ownerID: ownerID)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            try Task.checkCancellation()
+            guard !isClosed else { return }
             chatMessages.append(
                 ExplanationChatMessage(
                     role: .assistant,
@@ -113,7 +132,38 @@ final class ScreeningService {
         }
     }
 
+    func shutdown() async {
+        isClosed = true
+        isRunning = false
+        isChatReady = false
+        isChatResponding = false
+        await runner.shutdown(ownerID: ownerID)
+        statusText = "未加载"
+    }
+
     static func assembleJSON(fromCode raw: String) -> String? {
         AsdBehaviorParser.parse(raw)?.jsonString
+    }
+
+    private func assistantContext(
+        report: AsdBehaviorReport,
+        previousMessages: [ExplanationChatMessage]
+    ) -> String {
+        let baseContext = AsdExplanationPrompts.assistantResultContext(report: report)
+        let transcript = previousMessages
+            .filter { !$0.isError }
+            .map { message in
+                let role = message.role == .user ? "User" : "Assistant"
+                return "\(role): \(message.text)"
+            }
+            .joined(separator: "\n")
+
+        guard !transcript.isEmpty else { return baseContext }
+        return """
+        \(baseContext)
+
+        Previous conversation:
+        \(transcript)
+        """
     }
 }

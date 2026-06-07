@@ -12,6 +12,9 @@ FOUNDATION_EXPORT NSString * const ASDGgufNativeRunnerErrorDomain;
                                 mmprojPath:(NSString *)mmprojPath
                                      error:(NSError **)error NS_DESIGNATED_INITIALIZER;
 
+/// 当前 mmproj 是否支持音频输入。纯视觉投影器为 NO，调用方应跳过音频。
+@property (nonatomic, readonly) BOOL supportsAudio;
+
 - (nullable NSString *)generateWithSystemPrompt:(NSString *)systemPrompt
                                      userPrompt:(NSString *)userPrompt
                                      mediaPaths:(NSArray<NSString *> *)mediaPaths
