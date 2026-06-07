@@ -35,7 +35,7 @@ WANDB_PROJECT="${WANDB_PROJECT:-gemma4-asd-ft}"
 WANDB_ENTITY="${WANDB_ENTITY:-chenghuzi}"
 ENV_FILE="${ENV_FILE:-.env}"
 
-BARK_URL="${BARK_URL:-https://api.day.app/7GofcjfmCvWZqvfrvYuFV}"
+BARK_URL="${BARK_URL:-}"
 BARK_GROUP="${BARK_GROUP:-hz_res_ft}"
 LOG_PATH="${LOG_PATH:-}"
 STAGE="init"
