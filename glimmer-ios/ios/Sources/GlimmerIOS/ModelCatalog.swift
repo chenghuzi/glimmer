@@ -31,6 +31,7 @@ enum ModelCatalog {
         let id: String
         let filename: String
         let url: URL
+        let chinaURL: URL?
         let byteSize: Int64
         let sha256: String
 
@@ -85,6 +86,15 @@ enum ModelCatalog {
         directory.appendingPathComponent(item.filename + ".part")
     }
 
+    static func downloadURLs(for item: Item, region: ModelDownloadRegion) -> [URL] {
+        switch region {
+        case .china:
+            return uniqueURLs([item.chinaURL, item.url])
+        case .global:
+            return uniqueURLs([item.url, item.chinaURL])
+        }
+    }
+
     static func receiptURL(_ item: Item) -> URL {
         directory.appendingPathComponent(item.filename + ".receipt.json")
     }
@@ -131,9 +141,8 @@ enum ModelCatalog {
             return false
         }
         return receipt.filename == item.filename
-            && receipt.sourceURL == item.url.absoluteString
             && receipt.byteSize == size
-            && !receipt.sha256.isEmpty
+            && receipt.sha256 == item.sha256.lowercased()
     }
 
     static func validateExistingFileIfNeeded(_ item: Item) async throws -> Bool {
@@ -154,7 +163,7 @@ enum ModelCatalog {
             return false
         }
 
-        try writeReceipt(for: item, byteSize: item.byteSize, sha256: digest)
+        try writeReceipt(for: item, sourceURL: item.url, byteSize: item.byteSize, sha256: digest)
         return true
     }
 
@@ -167,7 +176,7 @@ enum ModelCatalog {
         return size
     }
 
-    static func installValidatedPartial(_ item: Item) throws {
+    static func installValidatedPartial(_ item: Item, sourceURL: URL) throws {
         let partial = partialURL(item)
         guard fileSize(partial) == item.byteSize else {
             throw ModelDownloadError.incompleteFile(item.filename)
@@ -182,12 +191,29 @@ enum ModelCatalog {
         let destination = localURL(item)
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: partial, to: destination)
-        try writeReceipt(for: item, byteSize: item.byteSize, sha256: digest)
+        try writeReceipt(for: item, sourceURL: sourceURL, byteSize: item.byteSize, sha256: digest)
     }
 
     static func removeLocalFile(_ item: Item) {
         try? FileManager.default.removeItem(at: localURL(item))
         removeReceipt(item)
+    }
+
+    static func removePartialFile(_ item: Item) {
+        try? FileManager.default.removeItem(at: partialURL(item))
+    }
+
+    private static func uniqueURLs(_ urls: [URL?]) -> [URL] {
+        var seen: Set<String> = []
+        var result: [URL] = []
+        for url in urls.compactMap({ $0 }) {
+            let key = url.absoluteString
+            guard seen.insert(key).inserted else {
+                continue
+            }
+            result.append(url)
+        }
+        return result
     }
 
     private static func readReceipt(_ item: Item) -> Receipt? {
@@ -198,10 +224,10 @@ enum ModelCatalog {
         return try? JSONDecoder().decode(Receipt.self, from: data)
     }
 
-    private static func writeReceipt(for item: Item, byteSize: Int64, sha256: String) throws {
+    private static func writeReceipt(for item: Item, sourceURL: URL, byteSize: Int64, sha256: String) throws {
         let receipt = Receipt(
             filename: item.filename,
-            sourceURL: item.url.absoluteString,
+            sourceURL: sourceURL.absoluteString,
             byteSize: byteSize,
             sha256: sha256.lowercased()
         )
