@@ -40,6 +40,11 @@ let package = Package(
                 .product(name: "GlimmerCore", package: "core")
             ],
             path: "Sources/GlimmerIOS"
+        ),
+        .testTarget(
+            name: "GlimmerIOSTests",
+            dependencies: ["GlimmerIOS"],
+            path: "Tests/GlimmerIOSTests"
         )
     ],
     cxxLanguageStandard: .cxx17

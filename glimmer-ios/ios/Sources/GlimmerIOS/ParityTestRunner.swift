@@ -38,46 +38,52 @@ enum ParityTestRunner {
     }
 
     private static func run(mediaRoot: URL) async throws -> [ParityRecord] {
-        let modelFiles = try bundledModelFiles()
-        let runner = AsdGgufRunner()
-        try await runner.load(modelFiles: modelFiles)
+        let modelFiles = try localModelFiles()
+        let ownerID = UUID()
+        let runner = AsdGgufRunner.shared
+        try await runner.load(modelFiles: modelFiles, ownerID: ownerID)
 
-        var records: [ParityRecord] = []
-        for sampleDirectory in try sampleDirectories(mediaRoot: mediaRoot) {
-            let frameURLs = try frameURLs(in: sampleDirectory)
-            let audioURL = audioURL(in: sampleDirectory)
-            let request = AsdGgufRequestBuilder.build(
-                frameURLs: frameURLs,
-                audioURL: audioURL,
-                userPrompt: AsdGgufPrompts.userInstruction
-            )
-            let raw = try await runner.generate(systemPrompt: AsdGgufPrompts.system, request: request)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let parsed = AsdBehaviorParser.parse(raw)
-            records.append(
-                ParityRecord(
-                    sampleID: sampleID(from: sampleDirectory),
-                    directoryPath: sampleDirectory.path,
-                    frameCount: frameURLs.count,
-                    audioPath: audioURL?.path,
-                    mediaCount: request.mediaItems.count,
-                    rawPrediction: raw,
-                    parsedJSON: parsed?.jsonString,
-                    error: nil
+        do {
+            var records: [ParityRecord] = []
+            for sampleDirectory in try sampleDirectories(mediaRoot: mediaRoot) {
+                let frameURLs = try frameURLs(in: sampleDirectory)
+                let audioURL = audioURL(in: sampleDirectory)
+                let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
+                let request = AsdGgufRequestBuilder.build(
+                    frameURLs: frameURLs,
+                    audioURL: supportsAudio ? audioURL : nil,
+                    userPrompt: AsdGgufPrompts.userInstruction
                 )
-            )
+                let raw = try await runner.generate(
+                    systemPrompt: AsdGgufPrompts.system,
+                    request: request,
+                    ownerID: ownerID
+                )
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let parsed = AsdBehaviorParser.parse(raw)
+                records.append(
+                    ParityRecord(
+                        sampleID: sampleID(from: sampleDirectory),
+                        directoryPath: sampleDirectory.path,
+                        frameCount: frameURLs.count,
+                        audioPath: audioURL?.path,
+                        mediaCount: request.mediaItems.count,
+                        rawPrediction: raw,
+                        parsedJSON: parsed?.jsonString,
+                        error: nil
+                    )
+                )
+            }
+            await runner.shutdown(ownerID: ownerID)
+            return records
+        } catch {
+            await runner.shutdown(ownerID: ownerID)
+            throw error
         }
-        return records
     }
 
-    private static func bundledModelFiles() throws -> AsdGgufModelFiles {
-        guard let modelURL = Bundle.main.url(forResource: "model-Q4_K_M", withExtension: "gguf") else {
-            throw AsdGgufRunnerError.missingModel
-        }
-        guard let mmprojURL = Bundle.main.url(forResource: "mmproj-bf16", withExtension: "gguf") else {
-            throw AsdGgufRunnerError.missingMmproj
-        }
-        return AsdGgufModelFiles(modelURL: modelURL, mmprojURL: mmprojURL)
+    private static func localModelFiles() throws -> AsdGgufModelFiles {
+        try ModelCatalog.resolvedModelFiles()
     }
 
     private static func sampleDirectories(mediaRoot: URL) throws -> [URL] {

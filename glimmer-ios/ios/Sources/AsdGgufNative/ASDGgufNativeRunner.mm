@@ -63,9 +63,22 @@ std::string ToString(NSString * value) {
 }
 
 NSString * ToNSString(const std::string & value) {
-    return [[NSString alloc] initWithBytes:value.data()
-                                    length:value.size()
-                                  encoding:NSUTF8StringEncoding];
+    if (value.empty()) {
+        return @"";
+    }
+    // 生成在 maxTokens / turn-boundary 处被截断时，末尾可能是半个多字节
+    // UTF-8 字符（中文回复尤其常见），initWithBytes:UTF8 会直接返回 nil。
+    // 逐步丢弃末尾最多 3 个字节凑成合法 UTF-8，保证永不返回 nil。
+    const size_t length = value.size();
+    for (size_t drop = 0; drop <= 3 && drop <= length; drop += 1) {
+        NSString * string = [[NSString alloc] initWithBytes:value.data()
+                                                     length:length - drop
+                                                   encoding:NSUTF8StringEncoding];
+        if (string != nil) {
+            return string;
+        }
+    }
+    return @"";
 }
 
 std::string Trim(std::string value) {
@@ -218,6 +231,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     llama_pos explanationNPast_;
     bool hasExplanationSession_;
     bool explanationAssistantNeedsClose_;
+    bool supportsAudio_;
 }
 
 - (nullable instancetype)initWithModelPath:(NSString *)modelPath
@@ -239,6 +253,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     explanationNPast_ = 0;
     hasExplanationSession_ = false;
     explanationAssistantNeedsClose_ = false;
+    supportsAudio_ = false;
 
     EnsureBackend();
 
@@ -289,15 +304,17 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
         [self cleanupRuntime];
         return nil;
     }
-    if (!mtmd_support_audio(mtmd_)) {
-        AssignError(error, NativeError::unsupportedAudio, @"GGUF projector does not support audio input.");
-        [self cleanupRuntime];
-        return nil;
-    }
+    // 当前 mmproj 为纯视觉投影器（不带音频塔）。音频不再是硬性要求：
+    // 不支持时降级为纯视觉，调用方据 supportsAudio 决定是否喂音频。
+    supportsAudio_ = mtmd_support_audio(mtmd_);
 
     generationBatch_ = llama_batch_init(1, 0, 1);
     hasGenerationBatch_ = true;
     return self;
+}
+
+- (BOOL)supportsAudio {
+    return supportsAudio_;
 }
 
 - (void)cleanupRuntime {

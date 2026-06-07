@@ -55,7 +55,7 @@ S3_BUCKET="${S3_BUCKET:-s3://huzi-nydata}"
 S3_WI8_URI="${S3_WI8_URI:-${S3_BUCKET}/asd-gemma4-code9-qlora-loftq-ep20-wi8-noaudio.litertlm}"
 S3_WI4_URI="${S3_WI4_URI:-${S3_BUCKET}/asd-gemma4-code9-qlora-loftq-ep20-wi4-noaudio.litertlm}"
 
-BARK_URL="${BARK_URL:-https://api.day.app/7GofcjfmCvWZqvfrvYuFV}"
+BARK_URL="${BARK_URL:-}"
 BARK_GROUP="${BARK_GROUP:-hz_res_ft}"
 LOG_PATH="${LOG_PATH:-}"
 STAGE="init"

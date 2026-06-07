@@ -1,11 +1,11 @@
 import Foundation
 
-enum ExplanationChatRole: Equatable {
+enum ExplanationChatRole: String, Codable, Equatable {
     case user
     case assistant
 }
 
-struct ExplanationChatMessage: Identifiable, Equatable {
+struct ExplanationChatMessage: Codable, Identifiable, Equatable {
     let id: UUID
     let role: ExplanationChatRole
     let text: String
