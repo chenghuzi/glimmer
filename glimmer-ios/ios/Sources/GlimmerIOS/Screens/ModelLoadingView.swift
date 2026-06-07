@@ -4,7 +4,7 @@ struct ModelLoadingView: View {
     var progress: CGFloat = 0
 
     private let message = "首次使用前，下载大模型权重中...\n下载完毕后无需联网，可离线使用"
-    private let foregroundNotice = "下载完成前请保持应用处于前台"
+    private let foregroundNotice = "模型下载需要一些时间，请勿离开当前页面，以免任务中断重来。"
 
     var body: some View {
         ZStack {
