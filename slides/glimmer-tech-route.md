@@ -56,7 +56,7 @@ description: Two-minute technical route from multimodal training to on-device iO
 
 <div class="eyebrow">01 / Training</div>
 
-## 把开放式生成压成可评估判别
+## Classification is easier than generation
 
 <div class="grid two" style="margin-top: 30px">
   <div class="card">
@@ -82,7 +82,7 @@ description: Two-minute technical route from multimodal training to on-device iO
 
 <div class="eyebrow">02 / Compression</div>
 
-## 混合精度 GGUF，而不是盲目全量化
+## 混合精度，才跑得动也跑得准
 
 <div class="split-model">
   <div class="model-block">
@@ -115,7 +115,7 @@ bit ::= "0" | "1"
 
 <div class="eyebrow">03 / Parity</div>
 
-## 我们调的不只是模型，还有输入漂移
+## 模型不变，输入也不能漂
 
 <div class="flow">
   <div class="flow-step">
@@ -153,7 +153,7 @@ bit ::= "0" | "1"
 
 <div class="eyebrow">04 / Evaluation</div>
 
-## 不是“能跑”的 demo，是可复现实测链路
+## 更小的模型，更强的测试表现
 
 <div class="metric-table">
   <div class="metric-row header">
@@ -163,9 +163,9 @@ bit ::= "0" | "1"
     <div>Macro F1</div>
   </div>
   <div class="metric-row data prior">
-    <div>Prior paper best, LLaVA-ASD</div>
-    <div>--</div>
-    <div>--</div>
+    <div>Prior paper best, LLaVA(13B)-ASD</div>
+    <div>n/a</div>
+    <div>n/a</div>
     <div>0.5977</div>
   </div>
   <div class="metric-row data highlight">
@@ -175,13 +175,13 @@ bit ::= "0" | "1"
     <div>0.6233</div>
   </div>
   <div class="metric-row data">
-    <div>GGUF native-equivalent baseline</div>
+    <div>GGUF on Mac</div>
     <div>1.0000</div>
     <div>0.5458</div>
     <div>0.5473</div>
   </div>
   <div class="metric-row data">
-    <div>iOS-preprocessed media baseline</div>
+    <div>GGUF on iOS</div>
     <div>1.0000</div>
     <div>0.5096</div>
     <div>0.5223</div>
@@ -194,28 +194,41 @@ bit ::= "0" | "1"
 
 <div class="eyebrow">05 / iOS inference design</div>
 
-## Analysis → Explanation：不是一次分类调用
+## Analysis → Explanation：超越分类
 
 <div class="conversation">
   <div class="turn">
-    <h3>1. Classification request</h3>
-    <p>fresh multimodal request with frames, audio and strict classification prompt.</p>
+    <div class="session-label">Session A</div>
+    <h3>Classification</h3>
+    <div class="media-strip">
+      <span></span><span></span><span></span><span class="audio"></span>
+    </div>
+    <p>frames + audio + strict 9-bit prompt</p>
     <div class="bit-code" style="transform: scale(0.75); transform-origin: left top">
       <span>0</span><span>0</span><span>1</span><span>0</span><span>1</span><span>0</span><span>0</span><span>0</span><span>0</span>
     </div>
   </div>
+  <div class="diagram-arrow">→</div>
   <div class="turn dark">
-    <h3>2. App-owned report</h3>
-    <p>The app parses the code, derives B10, and turns it into a parent-readable conclusion.</p>
+    <div class="session-label" style="background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.72)">App layer</div>
+    <h3>Parse + report</h3>
+    <p>parse 9 bits, derive background, generate a parent-readable conclusion.</p>
   </div>
+  <div class="diagram-arrow">→</div>
   <div class="turn">
-    <h3>3. Explanation session</h3>
-    <p>A new conversation is prefilled with the same media plus the parsed result; follow-up questions reuse this local session.</p>
+    <div class="session-label">Session B</div>
+    <h3>Explanation conversation</h3>
+    <div class="media-strip">
+      <span></span><span></span><span></span><span class="audio"></span>
+    </div>
+    <p>prefill same media + parsed result, then answer follow-up questions.</p>
+  </div>
+  <div class="kv-box">
+    <h3>KV cache reuse</h3>
+    <p>Later user turns append text only. The model still has the original video/audio context in the local explanation session.</p>
   </div>
 </div>
 
 <div class="card" style="margin-top: 26px">
-  <p><strong>核心亮点：</strong>用户不是只得到一个标签，而是可以围绕同一段视频继续追问；推理和对话都在设备本地完成。</p>
+  <p><strong>核心亮点：</strong>一次本地识别，升级成围绕同一视频的本地解释对话。</p>
 </div>
-
-<p class="caption">Technical win: multimodal fine-tuning, constrained decoding, mixed-precision GGUF, parity-tested native deployment.</p>
