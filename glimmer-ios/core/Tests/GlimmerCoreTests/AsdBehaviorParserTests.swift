@@ -11,10 +11,11 @@ final class AsdBehaviorParserTests: XCTestCase {
         XCTAssertEqual(report.features["B10"], true)
         XCTAssertEqual(report.overall, "background")
         XCTAssertEqual(report.conclusionTitle, "未注意到明显自闭症倾向类型行为")
-        XCTAssertEqual(report.conclusionText, "本次片段中，未注意到自闭症倾向类型行为。")
+        XCTAssertTrue(report.conclusionText.contains("系统暂未观察到明显的可关注行为特征"))
+        XCTAssertTrue(report.conclusionText.contains("温馨提示"))
+        XCTAssertTrue(report.conclusionText.contains("不构成医学诊断"))
         XCTAssertFalse(report.conclusionText.contains("B01"))
         XCTAssertFalse(report.conclusionText.contains("false"))
-        XCTAssertFalse(report.conclusionText.contains("诊断"))
         XCTAssertEqual(
             report.jsonString,
             #"{"schema_version":"1.0","features":{"B01":false,"B02":false,"B03":false,"B04":false,"B05":false,"B06":false,"B07":false,"B08":false,"B09":false,"B10":true},"overall":"background"}"#
@@ -30,10 +31,11 @@ final class AsdBehaviorParserTests: XCTestCase {
         XCTAssertEqual(report.features["B10"], false)
         XCTAssertEqual(report.overall, "behavior_features_observed")
         XCTAssertEqual(report.conclusionTitle, "注意到 2 类可关注行为")
-        XCTAssertTrue(report.conclusionText.contains("缺乏或回避眼神接触"))
-        XCTAssertTrue(report.conclusionText.contains("上肢刻板动作"))
+        XCTAssertTrue(report.conclusionText.contains("系统识别到以下值得关注的行为特征"))
+        XCTAssertTrue(report.conclusionText.contains("01｜缺乏或回避眼神接触"))
+        XCTAssertTrue(report.conclusionText.contains("02｜上肢刻板动作"))
+        XCTAssertTrue(report.conclusionText.contains("结果说明"))
         XCTAssertFalse(report.conclusionText.contains("B01"))
-        XCTAssertFalse(report.conclusionText.contains("诊断"))
         XCTAssertEqual(
             report.jsonString,
             #"{"schema_version":"1.0","features":{"B01":true,"B02":false,"B03":false,"B04":false,"B05":false,"B06":false,"B07":false,"B08":false,"B09":true,"B10":false},"overall":"behavior_features_observed"}"#
