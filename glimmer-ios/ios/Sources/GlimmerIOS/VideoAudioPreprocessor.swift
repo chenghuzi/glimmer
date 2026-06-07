@@ -2,7 +2,11 @@ import AVFoundation
 import CoreImage
 import Foundation
 import GlimmerCore
+import ImageIO
+import UniformTypeIdentifiers
+#if canImport(UIKit)
 import UIKit
+#endif
 
 enum VideoAudioPreprocessor {
     static func prepare(videoURL: URL) async -> PreparedGgufMedia {
@@ -294,6 +298,7 @@ enum VideoAudioPreprocessor {
             sourceWidth: image.width,
             sourceHeight: image.height
         )
+#if canImport(UIKit)
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         format.opaque = true
@@ -312,6 +317,41 @@ enum VideoAudioPreprocessor {
             return nil
         }
         return (data, scaled.width, scaled.height)
+#else
+        // macOS：纯 CoreGraphics 绘制 + ImageIO 编码 JPEG（不依赖 UIKit/AppKit）。
+        let width = scaled.width
+        let height = scaled.height
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else { return nil }
+
+        ctx.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        guard let rendered = ctx.makeImage() else { return nil }
+
+        let outData = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(
+            outData as CFMutableData,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else { return nil }
+        CGImageDestinationAddImage(dest, rendered, [
+            kCGImageDestinationLossyCompressionQuality: 0.95
+        ] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return (outData as Data, width, height)
+#endif
     }
 
     private static func makeCGImage(

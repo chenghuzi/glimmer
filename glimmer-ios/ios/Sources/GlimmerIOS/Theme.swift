@@ -1,5 +1,9 @@
 import SwiftUI
+#if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 extension Color {
     init(hex: UInt32, alpha: Double = 1) {
@@ -21,9 +25,13 @@ enum ASDTheme {
     static let brand = Color(hex: 0x0066FF)     // yomoa 品牌蓝
 }
 
-/// 从 bundle 加载图(loose PNG，UIImage(named:) 可找到)
+/// 从 bundle 加载图(loose PNG / 资源目录)。iOS 用 UIImage，macOS 用 NSImage。
 func bundleImage(_ name: String) -> Image {
+#if canImport(UIKit)
     if let ui = UIImage(named: name) { return Image(uiImage: ui) }
+#elseif canImport(AppKit)
+    if let ns = NSImage(named: name) { return Image(nsImage: ns) }
+#endif
     return Image(systemName: "photo")
 }
 
@@ -59,5 +67,9 @@ extension Font {
     }
 }
 
-/// 直接拿 UIImage（用于需要 intrinsic 尺寸/背景填充的场景）
+/// 直接拿平台原生图（用于需要 intrinsic 尺寸/背景填充的场景）
+#if canImport(UIKit)
 func bundleUIImage(_ name: String) -> UIImage? { UIImage(named: name) }
+#elseif canImport(AppKit)
+func bundleUIImage(_ name: String) -> NSImage? { NSImage(named: name) }
+#endif
