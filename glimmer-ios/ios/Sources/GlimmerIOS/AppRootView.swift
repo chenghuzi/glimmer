@@ -5,9 +5,10 @@ import UIKit
 public struct AppRootView: View {
     public init() {}
 
-    private enum Phase { case splash, loading, main }
+    private enum Phase { case splash, selectRegion, loading, main }
     @State private var phase: Phase = .splash
     @State private var downloader = ModelDownloadManager()
+    @State private var regionSelectionMessage: String?
 
     public var body: some View {
         ZStack {
@@ -15,6 +16,12 @@ public struct AppRootView: View {
             case .splash:
                 SplashView()
                     .transition(.opacity)
+            case .selectRegion:
+                ModelDownloadRegionSelectionView(
+                    message: regionSelectionMessage,
+                    onSelect: beginDownload
+                )
+                .transition(.opacity)
             case .loading:
                 ModelLoadingView(progress: downloader.progress)
                     .transition(.opacity)
@@ -31,10 +38,29 @@ public struct AppRootView: View {
                 return
             }
 
-            phase = .loading
-            await downloader.start()
+            guard let region = ModelDownloadRegionPreference.savedRegion() else {
+                regionSelectionMessage = nil
+                phase = .selectRegion
+                return
+            }
+
+            beginDownload(region)
+        }
+    }
+
+    private func beginDownload(_ region: ModelDownloadRegion) {
+        ModelDownloadRegionPreference.save(region)
+        regionSelectionMessage = nil
+        phase = .loading
+
+        Task { @MainActor in
+            await downloader.start(region: region)
             if downloader.isReady {
                 phase = .main
+            } else {
+                ModelDownloadRegionPreference.clear()
+                regionSelectionMessage = "下载未完成，请重新选择模型下载区域"
+                phase = .selectRegion
             }
         }
     }
