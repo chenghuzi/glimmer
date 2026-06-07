@@ -2,9 +2,23 @@ import SwiftUI
 
 struct ModelLoadingView: View {
     var progress: CGFloat = 0
+    var downloadedBytes: Int64 = 0
+    var totalBytes: Int64 = 0
 
     private let message = "首次使用前，下载大模型权重中...\n下载完毕后无需联网，可离线使用"
     private let foregroundNotice = "模型下载需要一些时间，请勿离开当前页面，以免任务中断重来。"
+
+    private var percentText: String {
+        "\(Int((max(0, min(1, progress)) * 100).rounded()))%"
+    }
+
+    private var sizeText: String? {
+        guard totalBytes > 0 else { return nil }
+        let f = ByteCountFormatter()
+        f.allowedUnits = [.useGB, .useMB]
+        f.countStyle = .file
+        return "\(f.string(fromByteCount: downloadedBytes)) / \(f.string(fromByteCount: totalBytes))"
+    }
 
     var body: some View {
         ZStack {
@@ -13,6 +27,20 @@ struct ModelLoadingView: View {
             VStack(spacing: 22) {
                 progressLine
                     .frame(width: 248, height: 2)
+
+                // 进度条太粗看不出在动，补一行数字反馈
+                VStack(spacing: 4) {
+                    Text(percentText)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(GTheme.ink)
+                        .monospacedDigit()
+                    if let sizeText {
+                        Text(sizeText)
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(GTheme.subtle)
+                            .monospacedDigit()
+                    }
+                }
 
                 Text(message)
                     .font(.system(size: 13, weight: .regular))

@@ -23,8 +23,12 @@ public struct AppRootView: View {
                 )
                 .transition(.opacity)
             case .loading:
-                ModelLoadingView(progress: downloader.progress)
-                    .transition(.opacity)
+                ModelLoadingView(
+                    progress: downloader.progress,
+                    downloadedBytes: downloader.downloadedBytes,
+                    totalBytes: downloader.totalBytes
+                )
+                .transition(.opacity)
             case .main:
                 MainFlow()
                     .transition(.opacity)
