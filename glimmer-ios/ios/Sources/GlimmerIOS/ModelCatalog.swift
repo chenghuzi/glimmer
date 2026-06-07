@@ -114,6 +114,16 @@ enum ModelCatalog {
         return localURL(item)
     }
 
+    /// 仅 macOS：若模型已随 app 打包进 bundle，直接用 bundle 内文件（跳过下载）。
+    /// iOS 永远返回 nil —— 完全不影响 iOS 的首启动下载逻辑。
+    static func bundledModelURL(_ item: Item) -> URL? {
+#if os(macOS)
+        return Bundle.main.url(forResource: item.resource, withExtension: "gguf")
+#else
+        return nil
+#endif
+    }
+
     static func resolvedModelFiles() throws -> AsdGgufModelFiles {
         guard let model = item(id: "model") else {
             throw ModelCatalogError.missingItem("model")
@@ -121,18 +131,77 @@ enum ModelCatalog {
         guard let mmproj = item(id: "mmproj") else {
             throw ModelCatalogError.missingItem("mmproj")
         }
-        guard hasTrustedLocalFile(model) else {
+        let modelURL: URL
+        if let bundled = bundledModelURL(model) {
+            modelURL = bundled
+        } else if hasTrustedLocalFile(model) {
+            modelURL = localURL(model)
+        } else {
             throw AsdGgufRunnerError.missingModel
         }
-        guard hasTrustedLocalFile(mmproj) else {
+        let mmprojURL: URL
+        if let bundled = bundledModelURL(mmproj) {
+            mmprojURL = bundled
+        } else if hasTrustedLocalFile(mmproj) {
+            mmprojURL = localURL(mmproj)
+        } else {
             throw AsdGgufRunnerError.missingMmproj
         }
-        return AsdGgufModelFiles(modelURL: localURL(model), mmprojURL: localURL(mmproj))
+        return AsdGgufModelFiles(modelURL: modelURL, mmprojURL: mmprojURL)
     }
 
     static func allFilesTrusted() -> Bool {
+        // 以 Application Support 里的文件为准（iOS 下载 / macOS 从 bundle 播种后都落在这）。
+        // 这样“带模型首发版”首启动时为假 → 触发播种；播种后及“不带模型更新版”均为真。
         !items.isEmpty && items.allSatisfy { hasTrustedLocalFile($0) }
     }
+
+#if os(macOS)
+    /// 当前 app bundle 是否自带全部模型（“带模型首发版” = true；“不带模型更新版” = false）。
+    static var hasBundledModels: Bool {
+        !items.isEmpty && items.allSatisfy { bundledModelURL($0) != nil }
+    }
+
+    /// 把 bundle 内模型拷到 Application Support 并写 receipt（仅在尚未就绪时）。
+    /// 播种一次后，后续“不带模型的更新版”可直接复用，无需重发 6GB、无需联网下载。
+    static func seedBundledModelsIfNeeded(progress: ((Double) -> Void)? = nil) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let total = max(items.reduce(Int64(0)) { $0 + $1.byteSize }, 1)
+        var done: Int64 = 0
+        for item in items {
+            guard let src = bundledModelURL(item) else { continue }
+            if hasTrustedLocalFile(item) {
+                done += item.byteSize
+                progress?(Double(done) / Double(total))
+                continue
+            }
+            let dst = localURL(item)
+            try? FileManager.default.removeItem(at: dst)
+            try copyFileReportingProgress(from: src, to: dst, alreadyDone: done, total: total, progress: progress)
+            done += item.byteSize
+            try writeReceipt(for: item, sourceURL: item.url, byteSize: item.byteSize, sha256: item.sha256.lowercased())
+            progress?(Double(done) / Double(total))
+        }
+    }
+
+    private static func copyFileReportingProgress(
+        from src: URL, to dst: URL, alreadyDone: Int64, total: Int64, progress: ((Double) -> Void)?
+    ) throws {
+        let input = try FileHandle(forReadingFrom: src)
+        defer { try? input.close() }
+        FileManager.default.createFile(atPath: dst.path, contents: nil)
+        let output = try FileHandle(forWritingTo: dst)
+        defer { try? output.close() }
+        var copied: Int64 = 0
+        while true {
+            let data = try input.read(upToCount: 16 * 1024 * 1024) ?? Data()
+            if data.isEmpty { break }
+            try output.write(contentsOf: data)
+            copied += Int64(data.count)
+            progress?(Double(alreadyDone + copied) / Double(total))
+        }
+    }
+#endif
 
     static func hasTrustedLocalFile(_ item: Item) -> Bool {
         let url = localURL(item)

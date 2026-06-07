@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import SwiftUI
 import PhotosUI
 import UIKit
@@ -88,3 +89,4 @@ struct VideoPicker: UIViewControllerRepresentable {
         }
     }
 }
+#endif
