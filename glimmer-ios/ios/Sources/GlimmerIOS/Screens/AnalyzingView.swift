@@ -66,7 +66,7 @@ struct AnalyzingView: View {
                     .resizable().scaledToFit()
                     .frame(width: 16, height: 16)
                 HStack(spacing: 0) {
-                    Text("Gramma 本地完整观察视频并分析")
+                    Text("Glimmer 本地完整观察视频并分析")
                     AnimatedEllipsis()
                 }
                 .font(.system(size: 14))
