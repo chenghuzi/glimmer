@@ -279,6 +279,10 @@ xcodebuild -project GemmaScreen.xcodeproj \
 
 你看到的报告应被理解为“这段视频中观察到了哪些 ASD 相关行为信号”，而不是“孩子是否患有 ASD”。微光不会给出医学诊断，也不能替代医生和治疗师的完整评估。它更适合作为一个早期提醒工具：当某些行为信号反复出现时，帮助家庭更早决定是否寻求专业帮助。
 
+## License
+
+本仓库代码以 MIT License 发布。GGUF 模型权重以 Apache-2.0 License 发布，详见 Hugging Face model card。
+
 ## Sources
 
 - Gemma 4 E4B model card: https://huggingface.co/google/gemma-4-E4B
