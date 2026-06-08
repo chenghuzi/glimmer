@@ -1,6 +1,7 @@
 import SwiftUI
 import OSLog
 import UniformTypeIdentifiers
+import AVFoundation
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -278,6 +279,37 @@ struct MainFlow: View {
     /// 视频选好后挂起，等用户确认弹窗才进分析
     @State private var pendingURL: URL?
     @State private var analysisURL: IdentifiableURL?
+    /// 选中的视频时长不在 10–30s 区间时弹提示
+    @State private var showLengthAlert = false
+
+    /// 视频时长要求（秒）：10–30s。
+    private static let minVideoSeconds = 10
+    private static let maxVideoSeconds = 30
+
+    /// 读取视频时长并校验是否在 10–30s 区间。
+    /// 合格 → 执行 `proceed`；否则弹「请上传 10–30 秒…」提示。
+    private func validateLength(_ url: URL, proceed: @escaping (URL) -> Void) {
+        Task { @MainActor in
+            let secs = await Self.readDurationSeconds(url)
+            if secs >= Self.minVideoSeconds && secs <= Self.maxVideoSeconds {
+                proceed(url)
+            } else {
+                showLengthAlert = true
+            }
+        }
+    }
+
+    private static func readDurationSeconds(_ url: URL) async -> Int {
+        let asset = AVURLAsset(url: url)
+        do {
+            let d = try await asset.load(.duration)
+            let secs = CMTimeGetSeconds(d)
+            guard secs.isFinite, secs > 0 else { return 0 }
+            return Int(secs.rounded())
+        } catch {
+            return 0
+        }
+    }
 
 #if os(iOS)
     private var cameraAvailable: Bool {
@@ -314,7 +346,7 @@ struct MainFlow: View {
                   let picked = panel.url,
                   let local = Self.importPickedVideo(picked) else { return }
             Task { @MainActor in
-                analysisURL = IdentifiableURL(url: local)
+                validateLength(local) { analysisURL = IdentifiableURL(url: $0) }
             }
         }
     }
@@ -371,6 +403,14 @@ struct MainFlow: View {
         .task {
             reportStore.load()
         }
+        .alert(
+            L10n.text(.videoLengthTitle, language: languageStore.language),
+            isPresented: $showLengthAlert
+        ) {
+            Button(L10n.text(.okGotIt, language: languageStore.language), role: .cancel) {}
+        } message: {
+            Text(L10n.text(.videoLengthMessage, language: languageStore.language))
+        }
 #if os(iOS)
         .confirmationDialog(L10n.text(.chooseVideoSource, language: languageStore.language), isPresented: $showSourceSheet, titleVisibility: .hidden) {
             if cameraAvailable {
@@ -394,10 +434,10 @@ struct MainFlow: View {
             VideoPicker { url in
                 showLibrary = false
                 guard let url else { return }
-                // 从相册选的视频直接进分析，不弹"拍摄完成"
+                // 从相册选的视频先校验时长（10–30s），合格才直接进分析
                 Task {
                     try? await Task.sleep(for: .milliseconds(450))
-                    analysisURL = IdentifiableURL(url: url)
+                    validateLength(url) { analysisURL = IdentifiableURL(url: $0) }
                 }
             }
             .ignoresSafeArea()
@@ -406,10 +446,10 @@ struct MainFlow: View {
             CameraVideoPicker { url in
                 showCamera = false
                 guard let url else { return }
-                // 拍完才走"拍摄完成"确认弹窗
+                // 拍完先校验时长（10–30s），合格才走"拍摄完成"确认弹窗
                 Task {
                     try? await Task.sleep(for: .milliseconds(450))
-                    pendingURL = url
+                    validateLength(url) { pendingURL = $0 }
                 }
             }
             .ignoresSafeArea()
