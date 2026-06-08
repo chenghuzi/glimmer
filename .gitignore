@@ -210,8 +210,14 @@ tempCodeRunnerFile.py
 # Local one-off automation scripts
 .local_scripts/
 
+# Local agent instructions
+AGENTS.md
+
 # Local documentation drafts
 docs/
+
+# Scratch notebooks
+*.ipynb
 
 # Ruff stuff:
 .ruff_cache/
