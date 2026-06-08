@@ -1,408 +1,287 @@
-# Gemma 4 ASD-DS Fine-Tuning
+<p align="center">
+  <img src="assets/readme/glimmer-icon.png" width="112" alt="Glimmer app icon" />
+</p>
 
-This repo fine-tunes a local Gemma 4 E4B instruction model on ASD-DS video/audio clips to predict structured behavior-feature labels.
+<h1 align="center">微光 Glimmer</h1>
 
-The trained model outputs a 9-bit label code for `B01` through `B09`; the app derives `B10` and assembles the final JSON report. This system is behavioral screening support only. It is not a medical diagnosis tool.
+<p align="center">
+  基于 Gemma 4 E4B 的端侧多模态 ASD 行为早期信号筛查模型与 iOS/macOS 应用。
+</p>
 
-## Repository Layout
+<p align="center">
+  <a href="https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf">GGUF Weights</a>
+  ·
+  <a href="glimmer-ios/README.md">iOS/macOS App</a>
+  ·
+  <a href="slides/glimmer-tech-route.md">Technical Route Slides</a>
+</p>
 
-```text
-.
-|-- asd_ds_dataset.py        # Read-only Hugging Face DatasetDict adapter for ASD-DS
-|-- main.py                  # Simple local Gemma text inference smoke script
-|-- run_train.py             # Training CLI: smoke-test, build-cache, train
-|-- data/raw/ASD-DS          # Raw ASD-DS dataset, not modified by code
-|-- docs/
-|   |-- ft_plan.md
-|   |-- deploy2ios.md
-|   |-- robust_quant_plan.md
-|   `-- unfinished_lang_agnostic.md
-|-- prompts/                 # system/user prompt files selected by --prompt-lang
-|-- scripts/
-|   `-- train_zh_v2.sh       # Chinese prompt training workflow
-`-- outputs/                 # Checkpoints, metrics, processor cache, ignored by git
-```
+> 微光 Glimmer 是筛查支持工具，只识别视频中可观察的行为信号，不提供医学诊断。任何结论都应由专业人员结合完整访谈和临床评估判断。
 
-## Requirements
+## TL;DR
 
-Use the project virtual environment for every Python command:
+微光 Glimmer 把 Gemma 4 E4B 从通用多模态模型微调成一个本地运行的儿童 ASD 相关行为信号识别模型。用户在 iPhone 或 Mac 上选择一段视频，模型在设备本地读取视频帧与音频，输出 B01-B09 的 9 位行为码；应用端再派生 B10 背景标签，生成家长可读的报告，并支持围绕同一段视频继续本地解释对话。
 
-```bash
-./.venv/bin/python
-```
+Tech highlights:
 
-Python dependencies are managed with `uv` and declared in `pyproject.toml`.
+- Gemma 4 E4B 多模态监督微调：视频帧、音频和结构化行为标签共同进入训练流程。
+- 9-bit 行为码：把开放式生成压缩成稳定的多标签判别问题，降低量化后输出漂移。
+- GGUF 混合精度部署：主模型 `Q4_K_M`，多模态 projector 保留 BF16，合计约 5.9 GB。
+- grammar-constrained decoding：iOS/macOS 推理阶段强制只生成 9 位 `0/1`。
+- local-first app：除首次下载模型权重外，视频、音频、报告和追问对话都在本地处理。
 
-Core dependencies include:
+## Quick Links
 
-- PyTorch CUDA build
-- Transformers
-- Datasets
-- PEFT
-- W&B
-- Click
-- NumPy
-
-External tools:
-
-- `ffmpeg`
-- `ffprobe`
-
-The code also checks the Homebrew path `/home/linuxbrew/.linuxbrew/bin` when tools are not on `PATH`.
-
-## Local Assets
-
-Expected base model:
-
-```text
-/home/huzi/Downloads/gemma-4-E4B-it
-```
-
-Expected dataset:
-
-```text
-data/raw/ASD-DS
-```
-
-The raw dataset is read-only for this project.
-
-## Dataset Schema
-
-`asd_ds_dataset.py` loads:
-
-- `train`: 553 samples
-- `validation`: 193 samples
-- `test`: 182 samples
-
-Each sample includes media paths and structured labels:
-
-- `video_path`
-- `audio_path`
-- `label_vector`
-- `labels`
-- `target_code`
-- `target_json`
-
-Canonical label IDs:
-
-| ID | Behavior Feature |
+| Item | Where |
 | --- | --- |
-| B01 | Absence or Avoidance of Eye Contact |
-| B02 | Aggressive Behavior |
-| B03 | Hyper- or Hyporeactivity to Sensory Input |
-| B04 | Non-Responsiveness to Verbal Interaction |
-| B05 | Non-Typical Language |
-| B06 | Object Lining-Up |
-| B07 | Self-Hitting or Self-Injurious Behavior |
-| B08 | Self-Spinning or Spinning Objects |
-| B09 | Upper Limb Stereotypies |
-| B10 | Background |
+| Demo video | 随 hackathon 官方提交表单提供，控制在 5 分钟以内。 |
+| iOS TestFlight | https://testflight.apple.com/join/5S8qS56v |
+| iOS/macOS source code | `glimmer-ios/` |
+| GGUF model weights | https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf |
+| Technical route deck | `slides/glimmer-tech-route.md` |
+| Mac/Linux GGUF eval entry | `eval_gguf_llama_cpp.py` |
+| Full training entry | `scripts/run_code9_r32_ep10_qlora_loftq_waudio_wi8.sh` |
 
-The supervised assistant target is a strict 9-bit code for `B01` through `B09`:
+<p align="center">
+  <a href="https://testflight.apple.com/join/5S8qS56v">
+    <img src="assets/readme/testflight-qr.png" width="160" alt="Glimmer TestFlight QR code" />
+  </a>
+</p>
+<p align="center">
+  <sub>扫码或点击加入微光 Glimmer iOS TestFlight 测试。</sub>
+</p>
+
+## 什么是微光 Glimmer
+
+微光 Glimmer 是一个基于 Google Gemma 4 E4B-it 的多模态微调模型，用视频和音频片段识别儿童社交行为中可能出现的 9 类 ASD 相关行为信号。模型权重以 Apache-2.0 形式发布为 GGUF，可在同名 iOS/macOS app 中本地使用，也可通过 macOS/Linux GGUF CLI 路径复现实验评测。
+
+## 背景与动机
+
+我从事自闭症相关的计算神经科学研究，关注如何利用大语言模型作为代理模型，探索自闭症人群语言生成背后的神经机制。在这个过程中，我们反复遇到一个现实问题：ASD 不是靠一次血液、影像或基因检查就能直接确诊的疾病；它在临床上高度依赖经验丰富的专业人员对行为、社交互动和发育史的综合观察。
+
+根据 [CDC ADDM Network 2022 数据](https://www.cdc.gov/autism/data-research/index.html)，约 1/31，即 3.2% 的 8 岁儿童被识别为 ASD。如果把这个比例粗略外推到中国儿童人口规模，会得到一个远高于公开登记统计口径的数字：按约 2.1 亿儿童估算，潜在 ASD 儿童数量约为 680 万；而[公开登记统计口径](https://www.nhc.gov.cn/fys/c100078/202209/0cb5cf9dd3964c0ab46beb31c1be312d.shtml)中的儿童 ASD 数量约为 200 万。这个数量级差异不能简单解释成种族或体质差异，更可能提示早筛、诊断与持续服务资源存在缺口。
+
+这个缺口尤其发生在行为观察环节。许多早期线索不是聚光灯下的明显异常，而是混在日常互动中的“微光”：回避目光、重复动作、对呼唤缺乏回应、异常的感官反应、非典型语言或物体排列。它们需要训练有素的医生、治疗师或研究者长期积累的默会知识才能稳定识别。
+
+**微光 Glimmer** 想做的事情，是把这部分行为观察知识的一小部分先结构化、端侧化、隐私保护地交到更多家庭手里。它不能、也不应该替代医生；它的目标是帮助家长更早意识到某段行为视频中可能存在需要关注的信号，从而更早地寻求专业机构和医生介入评估与干预。
+
+## What It Detects
+
+模型直接预测 B01-B09，应用端派生 B10：
+
+| ID | 行为信号 |
+| --- | --- |
+| B01 | 缺乏或回避眼神接触 |
+| B02 | 攻击性行为 |
+| B03 | 对感官输入反应过强或过弱 |
+| B04 | 对语言互动无反应 |
+| B05 | 非典型语言 |
+| B06 | 排列物品 |
+| B07 | 自伤或打自己 |
+| B08 | 自转或旋转物体 |
+| B09 | 上肢刻板动作 |
+| B10 | 背景：未观察到明显目标行为特征 |
+
+模型输出格式固定为 B01-B09 的 9-bit code：
 
 ```text
 000000000
 ```
 
-The required format is:
+`B10` 不由模型生成。当 B01-B09 全为 `0` 时，app 端确定性设置 `B10=true`。
+
+## Technical Architecture
+
+<p align="center">
+  <img src="assets/readme/architecture.svg" alt="Glimmer technical architecture" />
+</p>
+<p align="center">
+  <sub>Diagram source: <a href="assets/readme/architecture.mmd">assets/readme/architecture.mmd</a></sub>
+</p>
+
+核心代码路径：
+
+| Path | 作用 |
+| --- | --- |
+| `asd_ds_dataset.py` | 只读 ASD-DS `DatasetDict` adapter，维护 train/validation/test 边界。 |
+| `run_train.py` | 训练 CLI，包含 cache、train、HF eval、merge/export 等流程。 |
+| `eval_gguf_llama_cpp.py` | macOS/Linux GGUF 评测入口，使用 llama.cpp server 跑 held-out test。 |
+| `prompts/zh`, `prompts/en` | 训练和推理 prompt，prompt 内容参与 cache hash。 |
+| `scripts/run_code9_r32_ep10_qlora_loftq_waudio_wi8.sh` | 当前音频版 code9 主训练/评测流程脚本。 |
+| `glimmer-ios/core` | Swift core contract：prompt、media order、parser、采样参数、GBNF grammar。 |
+| `glimmer-ios/ios/Sources/AsdGgufNative` | Objective-C++ native bridge，直接调用 llama.cpp / mtmd / grammar sampler。 |
+| `glimmer-ios/ios/Sources/GlimmerIOS` | SwiftUI app、模型下载、视频预处理、报告和本地解释对话。 |
+
+训练、GGUF 评测和 app 推理共享同一套媒体语义；不同实验可以选择不同的最大帧数，但采样、缩放、音频和模态顺序保持一致：
+
+- frame sampling: `fps=1.0`，当前 app/GGUF eval contract 最多 32 帧，主训练脚本最多 16 帧，宽度 512，保持比例。
+- audio: mono 16 kHz PCM WAV，最多 30 秒。
+- modality order: frames -> audio -> text instruction。
+- context: `8192` tokens。
+- decoding: `temperature=0.0`, `top_k=1`, `top_p=1.0`, max output tokens `16`。
+
+推理阶段使用的 GBNF grammar：
 
 ```text
-^[01]{9}$
+root ::= bit bit bit bit bit bit bit bit bit
+bit ::= "0" | "1"
 ```
 
-`B10` is not predicted by the model. It is derived by the application: `B10=true` only when `B01` through `B09` are all `0`.
+## Model and Weights
 
-`target_json` is retained as the final app-report reference shape:
+模型权重不进入 Git 仓库。iOS/macOS app 首次启动时从 manifest 下载两个 GGUF 文件；国内和海外下载源由用户在 app 内选择。
 
-```json
-{
-  "schema_version": "1.0",
-  "features": {
-    "B01": false,
-    "B02": false,
-    "B03": false,
-    "B04": false,
-    "B05": false,
-    "B06": false,
-    "B07": false,
-    "B08": false,
-    "B09": true,
-    "B10": false
-  },
-  "overall": "behavior_features_observed"
-}
-```
+| File | Runtime role | Size | SHA-256 |
+| --- | --- | ---: | --- |
+| `model-Q4_K_M.gguf` | quantized main model | 5,302,272,992 bytes | `950ef480dd35ab2b48257f9caddfebe4da20ea950e286dd24add559ce284f5ad` |
+| `mmproj-bf16.gguf` | multimodal projector | 991,552,096 bytes | `a06cbbb4b6ec363b5068ce23ef37f9ed62ed57288a33860505f7d6153cd4b57e` |
 
-## Prompt Languages
-
-Training prompts are loaded from external Markdown files:
-
-- `prompts/en/system.md` and `prompts/en/user.md`
-- `prompts/zh/system.md` and `prompts/zh/user.md`
-
-Use `--prompt-lang en` or `--prompt-lang zh` on `smoke-test`, `build-cache`, and `train`. Prompt file contents are part of the processor-cache hash, so changing prompt language or editing prompt files requires rebuilding cache.
-
-## Quick Checks
-
-Compile the Python files:
-
-```bash
-./.venv/bin/python -m py_compile run_train.py asd_ds_dataset.py main.py
-```
-
-Run a single-sample preprocessing smoke test:
-
-```bash
-./.venv/bin/python run_train.py smoke-test \
-  --split train \
-  --index 0 \
-  --prompt-lang en \
-  --max-frames 4 \
-  --max-audio-seconds 4 \
-  --image-width 256
-```
-
-Run a text-only Gemma inference smoke:
-
-```bash
-./.venv/bin/python main.py \
-  --prompt "Say hello in five words." \
-  --max-new-tokens 16 \
-  --temperature 0
-```
-
-## Cache First
-
-Training directly from media is slow because each step must decode video/audio and run `Gemma4Processor`. Build the processor cache before serious training:
-
-```bash
-./.venv/bin/python run_train.py build-cache \
-  --cache-dir outputs/asd_ds_processor_cache_code9 \
-  --prompt-lang en \
-  --workers 8 \
-  --frame-fps 1.0 \
-  --max-frames 16 \
-  --max-audio-seconds 30 \
-  --image-width 512 \
-  --cache-kind supervised \
-  --cache-kind prompt
-```
-
-This writes processor-ready tensors under `outputs/asd_ds_processor_cache_code9/`.
-
-`--workers` controls parallel CPU cache builders. Use `--workers 8` for faster rebuilds on this workstation; lower it if CPU, RAM, or disk I/O becomes saturated.
-
-Cache contains:
-
-- supervised training/eval batches with labels
-- prompt-only batches for generated validation/test F1
-
-If any preprocessing parameter changes, rebuild the cache:
-
-- `--frame-fps`
-- `--max-frames`
-- `--max-audio-seconds`
-- `--image-width`
-- `--prompt-lang`
-- files under `prompts/<lang>/`
-- `--model-dir`
-
-## Full Training Command
-
-Use physical CUDA GPUs `1,2,3`:
-
-```bash
-./.venv/bin/python run_train.py train \
-  --cuda-devices 1,2,3 \
-  --model-dir /home/huzi/Downloads/gemma-4-E4B-it \
-  --data-root data/raw/ASD-DS \
-  --output-dir outputs/gemma4-asd-lora-r32-code9-full-v1 \
-  --cache-dir outputs/asd_ds_processor_cache_code9 \
-  --cache-mode require \
-  --prompt-lang en \
-  --run-name gemma4-asd-lora-r32-code9-full-v1 \
-  --wandb \
-  --env-file .env \
-  --wandb-project gemma4-asd-ft \
-  --wandb-entity chenghuzi \
-  --num-train-epochs 3 \
-  --learning-rate 5e-5 \
-  --warmup-ratio 0.03 \
-  --weight-decay 0.0 \
-  --per-device-train-batch-size 1 \
-  --per-device-eval-batch-size 1 \
-  --gradient-accumulation-steps 8 \
-  --logging-steps 5 \
-  --eval-steps 70 \
-  --save-steps 70 \
-  --save-total-limit 3 \
-  --frame-fps 1.0 \
-  --max-frames 16 \
-  --max-audio-seconds 30 \
-  --image-width 512 \
-  --lora-r 32 \
-  --lora-alpha 64 \
-  --lora-dropout 0.05 \
-  --target-modules language \
-  --max-memory-per-gpu 22GiB \
-  --prediction-max-new-tokens 16 \
-  --generated-metrics \
-  --bf16 \
-  --gradient-checkpointing
-```
-
-Why `eval-steps 70`: the train split has 553 samples and the effective optimizer step count is roughly `553 / 8 = 69.1`, so this evaluates about once per epoch.
-
-Use validation during training. Use test only at the final evaluation stage.
-
-## Chinese Prompt Training
-
-The Chinese prompt training workflow is saved as:
-
-```bash
-./scripts/train_zh_v2.sh
-```
-
-It builds the matching `--prompt-lang zh` processor cache, then trains `outputs/gemma4-asd-lora-r32-code9-zh-v1`.
-
-The script uses 8 cache workers by default. Override it with `CACHE_WORKERS=<n>` if needed.
-
-If the matching cache is already built, skip cache rebuild:
-
-```bash
-SKIP_CACHE=1 ./scripts/train_zh_v2.sh
-```
-
-The script trains on physical GPUs `2,3` by default and passes logical CUDA devices `0,1` to `run_train.py`. Override with `TRAIN_PHYSICAL_CUDA_DEVICES=<ids>` and `TRAIN_CUDA_DEVICES=<ids>` if needed.
-
-## Outputs
-
-Training saves LoRA adapter weights, not a duplicate full base model:
+Hugging Face:
 
 ```text
-outputs/gemma4-asd-lora-r32-code9-full-v1/
-|-- adapter_config.json
-|-- adapter_model.safetensors
-|-- checkpoint-*/
-`-- generated_metrics/
+https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf
 ```
 
-Generated metrics include:
+应用内下载 manifest 位于：
 
 ```text
-generated_metrics/
-|-- *_metrics.json
-|-- *_predictions.jsonl
-`-- *_f1.png
+glimmer-ios/ios/Resources/ModelManifest.json
 ```
 
-W&B logs:
+## Evaluation
 
-- training loss
-- validation loss
-- generated micro/macro F1
-- exact match
-- parse rate
-- per-label precision, recall, and F1
-- F1 plots
+评测集为 held-out test split，共 182 个 clips。训练过程中只使用 train/validation；test 只用于最终报告。
 
-The W&B API key is expected in `.env` as:
+| Runtime | Parse rate | Micro F1 | Macro F1 | Notes |
+| --- | ---: | ---: | ---: | --- |
+| Full precision LoRA on Linux | 1.0000 | 0.6118 | 0.6233 | BF16 LoRA, unquantized inference. |
+| GGUF on macOS | 1.0000 | 0.5458 | 0.5473 | Native-equivalent preprocessing/eval. |
+| GGUF on iOS | 1.0000 | 0.5096 | 0.5223 | Real device app runtime. |
 
-```text
-WANDB_API_KEY=...
-```
+作为参照，AV-ASD 论文中 13B LLaVA-ASD 的 best macro F1 为 0.5977；不同数据与设置不能直接等同，但这个结果给出了任务难度的大致量级。微光的重点在于：经过任务化微调和受控解码后，一个更小、可在手机本地运行的 Gemma 4 E4B 模型，已经能在行为信号识别上达到可用的早筛支持水平。
 
-## LiteRT-LM iOS Export
+## Quick Reproduction
 
-The trained LoRA adapter only changes language-model projection layers:
+### 1. Python environment and checks
 
-```text
-.*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)$
-```
-
-It does not modify the Gemma 4 audio encoder or audio adapter. Audio encoder
-weights remain base Gemma 4, so an audio-capable LiteRT-LM package can
-plausibly reuse official base Gemma 4 audio sections with the fine-tuned
-language core. Treat that as an export/packaging experiment until it is
-validated with LiteRT-LM inference and generated-label metrics.
-
-Working 4-bit LiteRT-LM export command for the latest trained adapter:
+Python 依赖由 `uv` 和 `uv.lock` 管理。仓库要求 Python `>=3.12,<3.14`，所有 Python 命令都应通过项目虚拟环境运行。
 
 ```bash
-./.venv/bin/python run_train.py export \
-  --adapter-dir outputs/gemma4-asd-lora-r32-code9-zh-v1
+uv venv --python 3.12
+uv sync
 ```
 
-`export` is now the full iOS packaging path: it merges the LoRA adapter,
-exports a W4 text+vision LiteRT-LM package, grafts the official base Gemma 4
-audio encoder/adapter sections, rebuilds `model.litertlm`, and validates that
-text, vision, and audio sections are present. If
-`outputs/gemma4-official-litert/gemma-4-E4B-it.litertlm` is missing, the command
-tries to download it from `litert-community/gemma-4-E4B-it-litert-lm`.
-
-This writes:
-
-```text
-outputs/gemma4-asd-lora-r32-code9-zh-v1-litert-w4-audio/model.litertlm
-```
-
-To rebuild the same output directory, add `--overwrite`.
-
-## Debug Training
-
-Small one-step run without W&B:
+基础同步后，可以运行轻量检查：
 
 ```bash
-./.venv/bin/python run_train.py train \
-  --cuda-devices 1,2,3 \
-  --output-dir outputs/debug-train \
-  --run-name debug-train \
-  --prompt-lang en \
-  --no-wandb \
-  --max-steps 1 \
-  --max-train-samples 1 \
-  --max-eval-samples 1 \
-  --max-test-samples 1 \
-  --max-frames 1 \
-  --max-audio-seconds 1 \
-  --image-width 256 \
-  --gradient-accumulation-steps 1 \
-  --eval-steps 1 \
-  --save-steps 1 \
-  --prediction-max-new-tokens 16
+./.venv/bin/python -m py_compile \
+  run_train.py \
+  asd_ds_dataset.py \
+  asd_eval_common.py \
+  eval_gguf_llama_cpp.py \
+  main.py
 ```
 
-## Performance Notes
+跨平台边界：
 
-For speed:
+- macOS/Linux: 可以运行数据 adapter、prompt/parser 检查，以及 GGUF eval 脚本；GGUF eval 还需要本机有 `ffmpeg` / `ffprobe` 和带 `mtmd` 支持的 llama.cpp `llama-server`。
+- Linux + NVIDIA CUDA: 完整训练路径需要 CUDA PyTorch、Transformers、PEFT、bitsandbytes、W&B 等训练依赖：
 
-- Build cache before training.
-- Train with `--cache-mode require`.
-- Keep generated metrics at epoch frequency, not every few steps.
-- Try fewer frames if needed, for example `--max-frames 8`.
-- Test `2 GPU vs 3 GPU` if model parallel communication becomes the bottleneck.
+```bash
+uv sync --group train-cuda
+```
 
-For memory:
+- Linux LiteRT export: 如需复现实验性 LiteRT-LM export，再同步：
 
-- Keep batch size at 1.
-- Use gradient accumulation for effective batch size.
-- Keep gradient checkpointing enabled unless you have enough headroom and want to trade memory for speed.
+```bash
+uv sync --group litert-export
+```
 
-## Safety and Explanation Strategy
+- iOS/macOS app: SwiftUI app 构建走 Xcode/XcodeGen，不依赖 Python venv；见下方 `Build the App`。
 
-The first fine-tuning round should produce structured labels only.
+### 2. Download GGUF weights
 
-Parent-facing explanations should be generated from:
+```bash
+mkdir -p outputs/gguf_experiments/gemma4-asd-code9-waudio-step420
 
-- validated structured labels
-- human-written behavior definitions
-- safety and limitation text
-- optional confidence values
+huggingface-cli download chenghuzi/glimmer-e4b-asd9-gguf \
+  model-Q4_K_M.gguf \
+  mmproj-bf16.gguf \
+  --local-dir outputs/gguf_experiments/gemma4-asd-code9-waudio-step420
+```
 
-Do not ask this model to invent timestamped clip-specific rationales unless the dataset later includes timestamped evidence or a separately evaluated evidence method is added.
+### 3. Run GGUF test eval
 
-Relevant docs:
+需要本机有带 multimodal/mtmd 支持的 llama.cpp `llama-server`。如果 binary 不在默认路径，用 `--llama-server-bin` 指定。
 
-- `docs/ft_plan.md`
-- `docs/unfinished_lang_agnostic.md`
-- `docs/deploy2ios.md`
+```bash
+./.venv/bin/python eval_gguf_llama_cpp.py \
+  --llama-server-bin outputs/llama.cpp/build/bin/llama-server \
+  --model-file outputs/gguf_experiments/gemma4-asd-code9-waudio-step420/model-Q4_K_M.gguf \
+  --mmproj-file outputs/gguf_experiments/gemma4-asd-code9-waudio-step420/mmproj-bf16.gguf \
+  --split test \
+  --prompt-lang zh \
+  --audio \
+  --constrain-code
+```
+
+### 4. Train from local ASD-DS
+
+完整音频版训练流程入口：
+
+```bash
+./scripts/run_code9_r32_ep10_qlora_loftq_waudio_wi8.sh
+```
+
+关键默认设置：
+
+- base model: `/home/huzi/Downloads/gemma-4-E4B-it`
+- dataset: `data/raw/ASD-DS`
+- prompt language: `zh`
+- LoRA rank: `32`
+- max frames: `16` in the training script, `32` in current app/eval contract
+- max audio: `30` seconds
+- best checkpoint selection: validation macro F1
+
+## Build the App
+
+iOS/macOS 工程由 `xcodegen` 从 `glimmer-ios/ios/project.yml` 生成。签名配置放在本地 `glimmer-ios/ios/.env`，不进入 Git。
+
+```bash
+cd glimmer-ios/ios
+./Scripts/generate-xcodeproj.sh
+```
+
+iOS 真机构建：
+
+```bash
+xcodebuild -project GemmaScreen.xcodeproj \
+  -scheme GemmaScreen \
+  -destination 'platform=iOS,name=<DEVICE_NAME>' \
+  -allowProvisioningUpdates \
+  build
+```
+
+macOS 构建：
+
+```bash
+xcodebuild -project GemmaScreen.xcodeproj \
+  -scheme GlimmerMac \
+  -destination 'platform=macOS,arch=arm64' \
+  build
+```
+
+`GlimmerMacFull` 也可把两个 GGUF 文件打进 app bundle；普通 `GlimmerMac` 则走下载或本地选择两份 GGUF 文件。
+
+## Privacy and Safety
+
+微光面向的是儿童行为视频，所以默认按最保守的隐私方式设计。用户选择或拍摄的视频会在设备本地完成抽帧、音频处理、模型推理、报告生成和后续解释对话；除首次下载模型权重外，app 不需要把视频、音频、报告或聊天内容上传到服务器。
+
+你看到的报告应被理解为“这段视频中观察到了哪些 ASD 相关行为信号”，而不是“孩子是否患有 ASD”。微光不会给出医学诊断，也不能替代医生、治疗师或专业机构的完整评估。它更适合作为一个早期提醒工具：当某些行为信号反复出现时，帮助家庭更早决定是否寻求专业帮助。
+
+## Sources
+
+- Gemma 4 E4B model card: https://huggingface.co/google/gemma-4-E4B
+- CDC ASD prevalence data: https://www.cdc.gov/autism/data-research/index.html
+- China NHC autism service reference: https://www.nhc.gov.cn/fys/c100078/202209/0cb5cf9dd3964c0ab46beb31c1be312d.shtml
+- AV-ASD / LLaVA-ASD reference: https://arxiv.org/abs/2406.02554
