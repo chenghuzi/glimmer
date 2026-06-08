@@ -24,17 +24,17 @@
 
 Tech highlights:
 
-- Gemma 4 E4B 多模态监督微调：视频帧、音频和结构化行为标签共同进入训练流程。
+- Gemma 4 E4B 多模态监督微调：每个训练样本都把视频帧和音频对齐到同一组结构化行为标签。
 - 9-bit 行为码：把开放式生成压缩成稳定的多标签判别问题，降低量化后输出漂移。
 - GGUF 混合精度部署：主模型 `Q4_K_M`，多模态 projector 保留 BF16，合计约 5.9 GB。
 - grammar-constrained decoding：iOS/macOS 推理阶段强制只生成 9 位 `0/1`。
-- local-first app：除首次下载模型权重外，视频、音频、报告和追问对话都在本地处理。
+- local-first app：除首次下载模型权重外，视频文件会留在本地，报告与追问对话也不会离开设备。
 
 ## Quick Links
 
 | Item | Where |
 | --- | --- |
-| Demo video | 随 hackathon 官方提交表单提供，控制在 5 分钟以内。 |
+| Demo video | 随 hackathon 官方提交表单提供。 |
 | iOS TestFlight | https://testflight.apple.com/join/5S8qS56v |
 | iOS/macOS source code | `glimmer-ios/` |
 | GGUF model weights | https://huggingface.co/chenghuzi/glimmer-e4b-asd9-gguf |
@@ -57,13 +57,13 @@ Tech highlights:
 
 ## 背景与动机
 
-我从事自闭症相关的计算神经科学研究，关注如何利用大语言模型作为代理模型，探索自闭症人群语言生成背后的神经机制。在这个过程中，我们反复遇到一个现实问题：ASD 不是靠一次血液、影像或基因检查就能直接确诊的疾病；它在临床上高度依赖经验丰富的专业人员对行为、社交互动和发育史的综合观察。
+我从事自闭症相关的计算神经科学研究，关注如何利用大语言模型作为代理模型，探索自闭症人群语言生成背后的神经机制。在这个过程中，我们反复遇到一个现实问题：ASD 很难靠一次实验室检查直接确诊；它在临床上高度依赖经验丰富的专业人员，需要他们结合行为表现与社交互动方式，再把发育史纳入整体判断。
 
-根据 [CDC ADDM Network 2022 数据](https://www.cdc.gov/autism/data-research/index.html)，约 1/31，即 3.2% 的 8 岁儿童被识别为 ASD。如果把这个比例粗略外推到中国儿童人口规模，会得到一个远高于公开登记统计口径的数字：按约 2.1 亿儿童估算，潜在 ASD 儿童数量约为 680 万；而[公开登记统计口径](https://www.nhc.gov.cn/fys/c100078/202209/0cb5cf9dd3964c0ab46beb31c1be312d.shtml)中的儿童 ASD 数量约为 200 万。这个数量级差异不能简单解释成种族或体质差异，更可能提示早筛、诊断与持续服务资源存在缺口。
+根据 [CDC ADDM Network 2022 数据](https://www.cdc.gov/autism/data-research/index.html)，约 1/31，即 3.2% 的 8 岁儿童被识别为 ASD。如果把这个比例粗略外推到中国儿童人口规模，会得到一个远高于公开登记统计口径的数字：按约 2.1 亿儿童估算，潜在 ASD 儿童数量约为 680 万；而[公开登记统计口径](https://www.nhc.gov.cn/fys/c100078/202209/0cb5cf9dd3964c0ab46beb31c1be312d.shtml)中的儿童 ASD 数量约为 200 万。这个数量级差异不能简单解释成种族或体质差异，更可能提示从早筛到诊断再到持续服务的资源缺口。
 
-这个缺口尤其发生在行为观察环节。许多早期线索不是聚光灯下的明显异常，而是混在日常互动中的“微光”：回避目光、重复动作、对呼唤缺乏回应、异常的感官反应、非典型语言或物体排列。它们需要训练有素的医生、治疗师或研究者长期积累的默会知识才能稳定识别。
+这个缺口尤其发生在行为观察环节。许多早期线索不是聚光灯下的明显异常，而是混在日常互动中的“微光”：孩子可能不看人眼睛，可能反复做同一个动作，也可能对呼唤没有反应；有些孩子会表现出异常的感官反应，出现非典型语言，或者反复排列物体。要稳定识别这些线索，往往依赖医生与治疗师长期积累下来的默会知识。
 
-**微光 Glimmer** 想做的事情，是把这部分行为观察知识的一小部分先结构化、端侧化、隐私保护地交到更多家庭手里。它不能、也不应该替代医生；它的目标是帮助家长更早意识到某段行为视频中可能存在需要关注的信号，从而更早地寻求专业机构和医生介入评估与干预。
+**微光 Glimmer** 想做的事情，是把这部分行为观察知识中的一小部分先结构化出来，并放到家庭自己的设备上运行。它不能也不应该替代医生；它的目标是帮助家长更早意识到某段行为视频中可能存在需要关注的信号，从而更早地寻求专业机构和医生介入评估与干预。
 
 ## What It Detects
 
@@ -104,15 +104,15 @@ Tech highlights:
 | Path | 作用 |
 | --- | --- |
 | `asd_ds_dataset.py` | 只读 ASD-DS `DatasetDict` adapter，维护 train/validation/test 边界。 |
-| `run_train.py` | 训练 CLI，包含 cache、train、HF eval、merge/export 等流程。 |
+| `run_train.py` | 训练 CLI，覆盖 cache 构建和训练，也包含 HF eval 与 merge/export。 |
 | `eval_gguf_llama_cpp.py` | macOS/Linux GGUF 评测入口，使用 llama.cpp server 跑 held-out test。 |
 | `prompts/zh`, `prompts/en` | 训练和推理 prompt，prompt 内容参与 cache hash。 |
 | `scripts/run_code9_r32_ep10_qlora_loftq_waudio_wi8.sh` | 当前音频版 code9 主训练/评测流程脚本。 |
-| `glimmer-ios/core` | Swift core contract：prompt、media order、parser、采样参数、GBNF grammar。 |
+| `glimmer-ios/core` | Swift core contract，定义 prompt contract, media order, parser, sampling settings and GBNF grammar。 |
 | `glimmer-ios/ios/Sources/AsdGgufNative` | Objective-C++ native bridge，直接调用 llama.cpp / mtmd / grammar sampler。 |
-| `glimmer-ios/ios/Sources/GlimmerIOS` | SwiftUI app、模型下载、视频预处理、报告和本地解释对话。 |
+| `glimmer-ios/ios/Sources/GlimmerIOS` | SwiftUI app 主体，负责模型下载和视频预处理，也负责报告生成与本地解释对话。 |
 
-训练、GGUF 评测和 app 推理共享同一套媒体语义；不同实验可以选择不同的最大帧数，但采样、缩放、音频和模态顺序保持一致：
+从训练流程到 GGUF 评测，再到 app 推理，三者共享同一套媒体语义；不同实验可以选择不同的最大帧数，但抽帧方式和缩放规则保持一致，音频格式与模态顺序也保持一致：
 
 - frame sampling: `fps=1.0`，当前 app/GGUF eval contract 最多 32 帧，主训练脚本最多 16 帧，宽度 512，保持比例。
 - audio: mono 16 kHz PCM WAV，最多 30 秒。
@@ -158,7 +158,7 @@ glimmer-ios/ios/Resources/ModelManifest.json
 | GGUF on macOS | 1.0000 | 0.5458 | 0.5473 | Native-equivalent preprocessing/eval. |
 | GGUF on iOS | 1.0000 | 0.5096 | 0.5223 | Real device app runtime. |
 
-作为参照，AV-ASD 论文中 13B LLaVA-ASD 的 best macro F1 为 0.5977；不同数据与设置不能直接等同，但这个结果给出了任务难度的大致量级。微光的重点在于：经过任务化微调和受控解码后，一个更小、可在手机本地运行的 Gemma 4 E4B 模型，已经能在行为信号识别上达到可用的早筛支持水平。
+作为参照，AV-ASD 论文中 13B LLaVA-ASD 的 best macro F1 为 0.5977；不同数据与设置不能直接等同，但这个结果给出了任务难度的大致量级。微光的重点在于：经过任务化微调和受控解码后，Gemma 4 E4B 这样更小的模型已经能在手机本地运行，并提供可用的行为信号早筛支持。
 
 ## Quick Reproduction
 
@@ -184,8 +184,8 @@ uv sync
 
 跨平台边界：
 
-- macOS/Linux: 可以运行数据 adapter、prompt/parser 检查，以及 GGUF eval 脚本；GGUF eval 还需要本机有 `ffmpeg` / `ffprobe` 和带 `mtmd` 支持的 llama.cpp `llama-server`。
-- Linux + NVIDIA CUDA: 完整训练路径需要 CUDA PyTorch、Transformers、PEFT、bitsandbytes、W&B 等训练依赖：
+- macOS/Linux: 可以运行数据 adapter 和 prompt/parser 检查，也可以运行 GGUF eval 脚本；GGUF eval 还需要本机有 `ffmpeg` / `ffprobe` 和带 `mtmd` 支持的 llama.cpp `llama-server`。
+- Linux + NVIDIA CUDA: 完整训练路径需要额外的 CUDA 训练依赖，例如 PyTorch, Transformers, PEFT, bitsandbytes and W&B：
 
 ```bash
 uv sync --group train-cuda
@@ -275,9 +275,9 @@ xcodebuild -project GemmaScreen.xcodeproj \
 
 ## Privacy and Safety
 
-微光面向的是儿童行为视频，所以默认按最保守的隐私方式设计。用户选择或拍摄的视频会在设备本地完成抽帧、音频处理、模型推理、报告生成和后续解释对话；除首次下载模型权重外，app 不需要把视频、音频、报告或聊天内容上传到服务器。
+微光面向的是儿童行为视频，所以默认按最保守的隐私方式设计。用户选择或拍摄的视频会在设备本地完成抽帧和音频处理，随后直接进入本地模型推理；报告生成和后续解释对话也都留在设备上。除首次下载模型权重外，app 不需要上传用户视频或音频，也不会上传报告或聊天内容。
 
-你看到的报告应被理解为“这段视频中观察到了哪些 ASD 相关行为信号”，而不是“孩子是否患有 ASD”。微光不会给出医学诊断，也不能替代医生、治疗师或专业机构的完整评估。它更适合作为一个早期提醒工具：当某些行为信号反复出现时，帮助家庭更早决定是否寻求专业帮助。
+你看到的报告应被理解为“这段视频中观察到了哪些 ASD 相关行为信号”，而不是“孩子是否患有 ASD”。微光不会给出医学诊断，也不能替代医生和治疗师的完整评估。它更适合作为一个早期提醒工具：当某些行为信号反复出现时，帮助家庭更早决定是否寻求专业帮助。
 
 ## Sources
 
