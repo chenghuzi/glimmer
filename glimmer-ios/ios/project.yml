@@ -22,7 +22,7 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: 微光 Glimmer
-        CFBundleVersion: "6"
+        CFBundleVersion: "7"
         UILaunchScreen: {}
         NSPhotoLibraryUsageDescription: 选择行为视频，在本地进行筛查分析（数据不离开设备）
         NSCameraUsageDescription: 录制行为视频用于本地筛查分析（数据不离开设备）
