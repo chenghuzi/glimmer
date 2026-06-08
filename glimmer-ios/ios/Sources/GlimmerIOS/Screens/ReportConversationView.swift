@@ -120,15 +120,33 @@ struct ReportConversationView: View {
             // 底部输入 + 提示 + Tab
             // 不再 ignoresSafeArea(.keyboard)：键盘弹起时这组会被顶到键盘上方，
             // 输入框可见。聚焦时隐藏脚注 + Tab，只留输入框贴在键盘上方。
-            VStack(spacing: 4) {
+            VStack(spacing: 0) {
                 Spacer()
-                chatInputBar
-                    .padding(.horizontal, 16)
-                if !inputFocused {
-                    Text(L10n.text(.localOnlyFootnote, language: languageStore.language))
-                        .font(.system(size: 12, weight: .light))
-                        .foregroundStyle(Color(hex: 0x666664))
-                    GlimmerTabBar(active: .report, onSelect: onSelectTab)
+                VStack(spacing: 4) {
+                    chatInputBar
+                        .padding(.horizontal, 16)
+                    if !inputFocused {
+                        Text(L10n.text(.localOnlyFootnote, language: languageStore.language))
+                            .font(.system(size: 12, weight: .light))
+                            .foregroundStyle(Color(hex: 0x666664))
+                        GlimmerTabBar(active: .report, onSelect: onSelectTab)
+                    }
+                }
+                .padding(.top, 12)
+                // 不透明背景，遮住下方滚动内容（用户气泡），避免与输入框占位文案叠字
+                //（与顶部 nav 同样的处理）。顶沿用一小段渐隐让滚动内容平滑淡出，而非硬切。
+                .background(alignment: .top) {
+                    VStack(spacing: 0) {
+                        LinearGradient(
+                            colors: [GTheme.bg.opacity(0), GTheme.bg],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 20)
+                        GTheme.bg
+                    }
+                    .padding(.top, -20)
+                    .allowsHitTesting(false)
                 }
             }
 
