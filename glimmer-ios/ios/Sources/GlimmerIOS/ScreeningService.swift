@@ -19,6 +19,8 @@ final class ScreeningService {
     enum AnalysisStage {
         case idle
         case preparingMedia
+        /// 预处理已完成，在等模型加载（冷加载或排队等上一个任务释放）。
+        case loadingModel
         case analyzingVideo
         case decoding
 
@@ -26,6 +28,7 @@ final class ScreeningService {
             switch self {
             case .idle: return nil
             case .preparingMedia: return L10n.text(.analysisStagePreparingMedia, language: language)
+            case .loadingModel: return L10n.text(.analysisStageLoadingModel, language: language)
             case .analyzingVideo: return L10n.text(.analysisStageAnalyzing, language: language)
             case .decoding: return L10n.text(.analysisStageDecoding, language: language)
             }
@@ -223,6 +226,9 @@ final class ScreeningService {
         isRunning = false
         isChatReady = false
         isChatResponding = false
+        // 先中断在途推理再排队卸载，否则 shutdown 会被 30-50s 的
+        // generate 堵在队列后面，下一次分析也跟着干等。
+        runner.cancelActiveWork()
         await runner.shutdown(ownerID: ownerID)
         statusText = L10n.text(.notLoaded, language: language)
     }

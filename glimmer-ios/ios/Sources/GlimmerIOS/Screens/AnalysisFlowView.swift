@@ -116,6 +116,8 @@ struct AnalysisFlowView: View {
             return
         }
         do {
+            // 预处理已完成；接下来等模型（冷加载或排队等上一个任务退出）。
+            service.analysisStage = .loadingModel
             try await preload
             try await service.analyze(
                 frameURLs: prepared.frameURLs,

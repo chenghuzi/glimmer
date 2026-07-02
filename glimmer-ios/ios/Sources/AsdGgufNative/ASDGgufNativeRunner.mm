@@ -6,6 +6,7 @@
 #include <llama/mtmd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <mutex>
 #include <string>
@@ -245,6 +246,13 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     llama_pos classificationNPast_;
     bool hasClassificationSession_;
     bool supportsAudio_;
+    // 跨线程取消标志：requestCancelActiveWork 置位后，llama 的 abort 回调
+    // 让正在进行的 decode 尽快返回错误，避免被放弃的推理堵塞后续任务。
+    std::atomic<bool> cancelRequested_;
+}
+
+- (void)requestCancelActiveWork {
+    cancelRequested_.store(true, std::memory_order_relaxed);
 }
 
 - (nullable instancetype)initWithModelPath:(NSString *)modelPath
@@ -301,6 +309,14 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
         [self cleanupRuntime];
         return nil;
     }
+    cancelRequested_.store(false, std::memory_order_relaxed);
+    llama_set_abort_callback(
+        context_,
+        [](void * data) -> bool {
+            return static_cast<std::atomic<bool> *>(data)->load(std::memory_order_relaxed);
+        },
+        &cancelRequested_
+    );
 
     mtmd_context_params mtmdParams = mtmd_context_params_default();
     mtmdParams.use_gpu = true;
@@ -554,6 +570,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    cancelRequested_.store(false, std::memory_order_relaxed);
 
     hasExplanationSession_ = false;
     explanationAssistantNeedsClose_ = false;
@@ -591,6 +608,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    cancelRequested_.store(false, std::memory_order_relaxed);
 
     if (!hasClassificationSession_) {
         AssignError(error, NativeError::noClassificationSession,
@@ -635,6 +653,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    cancelRequested_.store(false, std::memory_order_relaxed);
 
     // 全量重建会清空 KV cache，分类续接点随之失效。
     hasClassificationSession_ = false;
@@ -669,6 +688,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+    cancelRequested_.store(false, std::memory_order_relaxed);
 
     if (!hasExplanationSession_) {
         AssignError(error, NativeError::noExplanationSession, @"Explanation session is not initialized.");

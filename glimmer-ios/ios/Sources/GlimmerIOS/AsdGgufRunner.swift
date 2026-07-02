@@ -36,7 +36,17 @@ final class AsdGgufRunner: @unchecked Sendable {
     static let shared = AsdGgufRunner()
 
     private var modelFiles: AsdGgufModelFiles?
-    private var nativeRunner: ASDGgufNativeRunner?
+    private var nativeRunner: ASDGgufNativeRunner? {
+        didSet {
+            cancellableRunnerLock.lock()
+            cancellableRunner = nativeRunner
+            cancellableRunnerLock.unlock()
+        }
+    }
+    /// 供跨线程取消用的运行时引用：cancelActiveWork 不能等 inferenceQueue
+    ///（要取消的正是队列上跑着的任务），单独加锁同步。
+    private let cancellableRunnerLock = NSLock()
+    private var cancellableRunner: ASDGgufNativeRunner?
     private var lease = GgufRuntimeLease()
     private let inferenceQueue = DispatchQueue(label: "com.glimmer.asd.gguf.inference", qos: .userInitiated)
     private let logger = Logger(subsystem: "cn.enactflow.glimmer", category: "GgufRuntime")
@@ -218,6 +228,16 @@ final class AsdGgufRunner: @unchecked Sendable {
                 continuation.resume()
             }
         }
+    }
+
+    /// 立即请求中断正在进行的推理（不排队，任意线程可调）。被放弃的长推理
+    /// 会在 1-2 秒内报错退出，释放 inferenceQueue；新任务入口自动复位标志。
+    func cancelActiveWork() {
+        cancellableRunnerLock.lock()
+        let runner = cancellableRunner
+        cancellableRunnerLock.unlock()
+        runner?.requestCancelActiveWork()
+        DiagnosticsLog.append("[Gguf] cancel requested")
     }
 
     func shutdown(ownerID: UUID) async {

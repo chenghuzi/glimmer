@@ -45,6 +45,11 @@ typedef void (^ASDGgufPrefillProgressBlock)(int64_t tokensDone, int64_t tokensTo
 
 - (void)invalidateExplanationSession;
 
+/// 跨线程请求中断当前推理（无锁，可从任意线程调用）。置位后 llama 的
+/// abort 回调让进行中的 decode 尽快返回错误；每个新任务入口自动复位。
+/// 用于用户离开分析页时，避免被放弃的长推理堵塞后续任务。
+- (void)requestCancelActiveWork;
+
 @end
 
 NS_ASSUME_NONNULL_END
