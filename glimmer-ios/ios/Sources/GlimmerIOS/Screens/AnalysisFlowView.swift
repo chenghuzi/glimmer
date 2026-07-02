@@ -100,6 +100,9 @@ struct AnalysisFlowView: View {
     private func run() async {
         let language = languageStore.language
         reportLanguage = language
+        // 模型加载（inferenceQueue）与视频预处理（AVFoundation）并行；
+        // analyze 内部会再走一次 ensureLoaded，命中"已加载复用"直接返回。
+        async let preload: Void = service.ensureLoaded(language: language)
         let prepared = await VideoAudioPreprocessor.prepare(videoURL: videoURL)
         guard !Task.isCancelled else { return }
         media = prepared
@@ -108,6 +111,7 @@ struct AnalysisFlowView: View {
             return
         }
         do {
+            try await preload
             try await service.analyze(
                 frameURLs: prepared.frameURLs,
                 audioURL: prepared.audioURL,
