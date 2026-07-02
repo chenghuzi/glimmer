@@ -40,7 +40,16 @@ enum class NativeError : NSInteger {
     decode = 12,
     detokenize = 13,
     noExplanationSession = 14,
+    noClassificationSession = 15,
 };
+
+double NowSeconds() {
+    return CFAbsoluteTimeGetCurrent();
+}
+
+void LogTiming(NSString * label, double startSeconds) {
+    NSLog(@"[GgufTiming] %@ took %.2fs", label, NowSeconds() - startSeconds);
+}
 
 NSError * MakeError(NativeError code, NSString * message) {
     return [NSError errorWithDomain:ASDGgufNativeRunnerErrorDomain
@@ -231,6 +240,10 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     llama_pos explanationNPast_;
     bool hasExplanationSession_;
     bool explanationAssistantNeedsClose_;
+    // 最近一次 generate 留下的会话位置：KV cache 里还保存着「分类 prompt + 媒体
+    // + 9 位 code」，可被 continueExplanationSession 纯文本续接复用。
+    llama_pos classificationNPast_;
+    bool hasClassificationSession_;
     bool supportsAudio_;
 }
 
@@ -253,9 +266,12 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     explanationNPast_ = 0;
     hasExplanationSession_ = false;
     explanationAssistantNeedsClose_ = false;
+    classificationNPast_ = 0;
+    hasClassificationSession_ = false;
     supportsAudio_ = false;
 
     EnsureBackend();
+    const double loadStart = NowSeconds();
 
     const std::string modelPathString = ToString(modelPath);
     llama_model_params modelParams = llama_model_default_params();
@@ -275,7 +291,9 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     contextParams.n_seq_max = 1;
     contextParams.n_threads = ThreadCount();
     contextParams.n_threads_batch = ThreadCount();
-    contextParams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    // AUTO：后端（Metal）支持该模型的 head 尺寸时启用 flash attention 加速长上下文
+    // prefill，不支持时由 llama.cpp 自动回退，等价于 DISABLED。
+    contextParams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
 
     context_ = llama_init_from_model(model_, contextParams);
     if (context_ == nullptr) {
@@ -289,7 +307,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     mtmdParams.print_timings = false;
     mtmdParams.n_threads = ThreadCount();
     mtmdParams.media_marker = kMediaMarker;
-    mtmdParams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    mtmdParams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO;
     mtmdParams.warmup = false;
 
     const std::string mmprojPathString = ToString(mmprojPath);
@@ -310,6 +328,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
 
     generationBatch_ = llama_batch_init(1, 0, 1);
     hasGenerationBatch_ = true;
+    LogTiming(@"runtime load (model+ctx+mmproj)", loadStart);
     return self;
 }
 
@@ -350,6 +369,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
         return NO;
     }
 
+    const double bitmapStart = NowSeconds();
     std::vector<mtmd_bitmap *> bitmaps;
     bitmaps.reserve(mediaPaths.count);
     for (NSString * path in mediaPaths) {
@@ -390,6 +410,12 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
         return NO;
     }
 
+    if (mediaPaths.count > 0) {
+        LogTiming([NSString stringWithFormat:@"load %lu media bitmaps", (unsigned long)mediaPaths.count], bitmapStart);
+    }
+
+    const double evalStart = NowSeconds();
+    const llama_pos evalStartPos = *nPast;
     const int32_t evalResult = mtmd_helper_eval_chunks(
         mtmd_,
         context_,
@@ -400,6 +426,8 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
         true,
         nPast
     );
+    LogTiming([NSString stringWithFormat:@"prefill eval (media=%lu, nPast %d -> %d)",
+               (unsigned long)mediaPaths.count, evalStartPos, *nPast], evalStart);
 
     mtmd_input_chunks_free(chunks);
     for (mtmd_bitmap * item : bitmaps) {
@@ -445,6 +473,8 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.0f));
     llama_sampler_chain_add(sampler, llama_sampler_init_greedy());
 
+    const double decodeStart = NowSeconds();
+    int32_t decodedTokens = 0;
     std::string output;
     const int32_t tokenLimit = std::max<int32_t>(1, maxOutputTokens);
     for (int32_t index = 0; index < tokenLimit; index += 1) {
@@ -470,6 +500,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
         BatchClear(generationBatch_);
         BatchAdd(generationBatch_, token, *nPast, 0, true);
         *nPast += 1;
+        decodedTokens += 1;
         if (llama_decode(context_, generationBatch_) != 0) {
             llama_sampler_free(sampler);
             AssignError(error, NativeError::decode, @"Failed to decode generated token.");
@@ -485,6 +516,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     }
 
     llama_sampler_free(sampler);
+    LogTiming([NSString stringWithFormat:@"decode %d tokens", decodedTokens], decodeStart);
     return ToNSString(Trim(output));
 }
 
@@ -501,6 +533,8 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     hasExplanationSession_ = false;
     explanationAssistantNeedsClose_ = false;
     explanationNPast_ = 0;
+    hasClassificationSession_ = false;
+    classificationNPast_ = 0;
 
     const std::string formattedPrompt = FormatGemma4Prompt(ToString(systemPrompt), ToString(userPrompt));
     llama_memory_clear(llama_get_memory(context_), true);
@@ -510,12 +544,60 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
         return nil;
     }
 
-    return [self decodeWithMaxOutputTokens:kMaxOutputTokens
-                                      nPast:&nPast
-                               codeGrammar:YES
-                        stopAtTurnBoundary:NO
-                      consumedTurnBoundary:nullptr
-                                      error:error];
+    NSString * output = [self decodeWithMaxOutputTokens:kMaxOutputTokens
+                                                   nPast:&nPast
+                                            codeGrammar:YES
+                                     stopAtTurnBoundary:NO
+                                   consumedTurnBoundary:nullptr
+                                                   error:error];
+    if (output != nil) {
+        // KV cache 里留着「分类 prompt + 媒体 + code」，供解释会话纯文本续接。
+        classificationNPast_ = nPast;
+        hasClassificationSession_ = true;
+    }
+    return output;
+}
+
+- (BOOL)continueExplanationSessionWithUserInstruction:(NSString *)userInstruction
+                                     assistantContext:(NSString *)assistantContext
+                                                error:(NSError **)error {
+    if (error != nullptr) {
+        *error = nil;
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (!hasClassificationSession_) {
+        AssignError(error, NativeError::noClassificationSession,
+                    @"No classification session available to continue from.");
+        return NO;
+    }
+
+    // 结构上等价于全量 prefill 的「user 指令 + 预填 assistant 结果」两轮，
+    // 只是媒体和分类上下文直接复用 KV cache，先补上分类 model turn 的收尾。
+    std::string prompt;
+    prompt += "<turn|>\n";
+    prompt += "<|turn>user\n";
+    prompt += Trim(ToString(userInstruction));
+    prompt += "<turn|>\n";
+    prompt += "<|turn>model\n";
+    prompt += Trim(ToString(assistantContext));
+    prompt += "<turn|>\n";
+
+    llama_pos nPast = classificationNPast_;
+    hasClassificationSession_ = false;
+    classificationNPast_ = 0;
+    if (![self evaluateFormattedPrompt:prompt mediaPaths:@[] nPast:&nPast error:error]) {
+        hasExplanationSession_ = false;
+        explanationAssistantNeedsClose_ = false;
+        explanationNPast_ = 0;
+        return NO;
+    }
+
+    hasExplanationSession_ = true;
+    explanationAssistantNeedsClose_ = false;
+    explanationNPast_ = nPast;
+    return YES;
 }
 
 - (BOOL)beginExplanationSessionWithSystemPrompt:(NSString *)systemPrompt
@@ -528,6 +610,10 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     }
 
     std::lock_guard<std::mutex> lock(mutex_);
+
+    // 全量重建会清空 KV cache，分类续接点随之失效。
+    hasClassificationSession_ = false;
+    classificationNPast_ = 0;
 
     const std::string formattedPrompt = FormatGemma4PrefilledPrompt(
         ToString(systemPrompt),
@@ -593,6 +679,9 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     hasExplanationSession_ = false;
     explanationAssistantNeedsClose_ = false;
     explanationNPast_ = 0;
+    // 会话失效时分类续接点一并作废，防止跨视频/跨 owner 误续接。
+    hasClassificationSession_ = false;
+    classificationNPast_ = 0;
 }
 
 @end

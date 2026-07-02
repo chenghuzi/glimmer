@@ -89,19 +89,32 @@ final class ScreeningService {
         chatError = nil
         chatMessages = initialMessages
 
-        await runner.invalidateExplanationSession(ownerID: ownerID)
-        let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
-        let request = AsdGgufRequestBuilder.build(
-            frameURLs: frameURLs,
-            audioURL: supportsAudio ? audioURL : nil,
-            userPrompt: AsdExplanationPrompts.userInstruction(language: language)
-        )
-        try await runner.beginExplanationSession(
-            systemPrompt: AsdExplanationPrompts.system(language: language),
-            request: request,
-            assistantContext: assistantContext(report: report, previousMessages: initialMessages, language: language),
-            ownerID: ownerID
-        )
+        let context = assistantContext(report: report, previousMessages: initialMessages, language: language)
+        do {
+            // 快路径：分析刚结束时 KV cache 里还留着本次媒体，纯文本续接，
+            // 不重编码 32 帧；历史报告重开或模型已重载时走全量 prefill。
+            try await runner.continueExplanationSession(
+                userInstruction: AsdExplanationPrompts.continuationInstruction(language: language),
+                assistantContext: context,
+                ownerID: ownerID
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            await runner.invalidateExplanationSession(ownerID: ownerID)
+            let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
+            let request = AsdGgufRequestBuilder.build(
+                frameURLs: frameURLs,
+                audioURL: supportsAudio ? audioURL : nil,
+                userPrompt: AsdExplanationPrompts.userInstruction(language: language)
+            )
+            try await runner.beginExplanationSession(
+                systemPrompt: AsdExplanationPrompts.system(language: language),
+                request: request,
+                assistantContext: context,
+                ownerID: ownerID
+            )
+        }
         try Task.checkCancellation()
         guard !isClosed else { return }
         isChatReady = true

@@ -26,6 +26,14 @@ FOUNDATION_EXPORT NSString * const ASDGgufNativeRunnerErrorDomain;
                                      mediaPaths:(NSArray<NSString *> *)mediaPaths
                                           error:(NSError **)error;
 
+/// 分类刚结束时的快路径：不清 KV cache，在同一会话上用纯文本追加
+/// 「解释任务指令 + 预填结果上下文」，媒体不重新编码。
+/// 仅在最近一次 generate 成功且之后未清空会话时可用，否则返回 NO，
+/// 调用方应回落到 beginExplanationSessionWithSystemPrompt 全量 prefill。
+- (BOOL)continueExplanationSessionWithUserInstruction:(NSString *)userInstruction
+                                     assistantContext:(NSString *)assistantContext
+                                                error:(NSError **)error;
+
 - (nullable NSString *)sendExplanationUserMessage:(NSString *)message
                                   maxOutputTokens:(NSInteger)maxOutputTokens
                                             error:(NSError **)error;

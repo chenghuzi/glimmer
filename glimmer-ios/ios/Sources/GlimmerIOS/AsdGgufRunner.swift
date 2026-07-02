@@ -53,9 +53,15 @@ final class AsdGgufRunner: @unchecked Sendable {
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             inferenceQueue.async {
+                let ownerChanged = !self.lease.isActive(ownerID)
                 self.lease.acquire(ownerID)
 
                 if self.modelFiles == modelFiles, self.nativeRunner != nil {
+                    if ownerChanged {
+                        // 换 owner 复用 runtime 时清掉上一个流程留下的会话，
+                        // 防止新 owner 的解释对话续接到旧视频的 KV cache。
+                        self.nativeRunner?.invalidateExplanationSession()
+                    }
                     self.logMemory("reuse loaded runtime")
                     continuation.resume()
                     return
@@ -133,6 +139,31 @@ final class AsdGgufRunner: @unchecked Sendable {
                         mediaPaths: mediaPaths
                     )
                     self.logMemory("after explanation prefill")
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// 分类刚结束时的快路径：复用 KV cache 纯文本续接解释会话，不重编码媒体。
+    /// 无可续接的分类会话（历史报告重开、模型重载）时抛错，调用方回落全量 prefill。
+    func continueExplanationSession(
+        userInstruction: String,
+        assistantContext: String,
+        ownerID: UUID
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            inferenceQueue.async {
+                do {
+                    let nativeRunner = try self.activeNativeRunner(ownerID: ownerID)
+                    self.logMemory("before explanation continue")
+                    try nativeRunner.continueExplanationSession(
+                        withUserInstruction: userInstruction,
+                        assistantContext: assistantContext
+                    )
+                    self.logMemory("after explanation continue")
                     continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
