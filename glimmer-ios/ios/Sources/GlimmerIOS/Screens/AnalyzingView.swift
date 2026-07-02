@@ -23,6 +23,8 @@ struct AnalyzingView: View {
     var stageText: String? = nil
     var onAnimationDone: () -> Void = {}
 
+    /// 三连击分析卡片弹出诊断日志分享（连接不稳时给测试同学的导出通道）。
+    @State private var showDiagnosticsShare = false
     /// UI 节奏控制：模型实际 token 速度可能很快（真机几百 ms 出完 9 位），
     /// 我们不让 UI 跟着模型走，固定 0.9s/项 揭示，这样用户能看清每条行为词。
     @State private var revealedCount: Int = 0
@@ -151,11 +153,35 @@ struct AnalyzingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(hex: 0xF6F6F5), in: RoundedRectangle(cornerRadius: 24))
+        .onTapGesture(count: 3) { showDiagnosticsShare = true }
+        .sheet(isPresented: $showDiagnosticsShare) {
+            DiagnosticsShareSheet()
+        }
     }
 
     /// User-facing behavior names in internal bit order.
     static func featureNames(language: GlimmerLanguage) -> [String] {
         AsdBehaviorParser.labels.map { $0.name(language: language) }
+    }
+}
+
+// MARK: - 诊断日志分享（三连击分析卡片触发）
+
+private struct DiagnosticsShareSheet: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("诊断日志")
+                .font(.headline)
+            if FileManager.default.fileExists(atPath: DiagnosticsLog.fileURL.path) {
+                ShareLink(item: DiagnosticsLog.fileURL) {
+                    Label("导出 diagnostics.log", systemImage: "square.and.arrow.up")
+                }
+            } else {
+                Text("暂无日志")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(24)
     }
 }
 

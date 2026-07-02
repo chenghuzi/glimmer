@@ -40,6 +40,9 @@ final class ScreeningService {
     private let runner = AsdGgufRunner.shared
     private var isClosed = false
     private var language: GlimmerLanguage = .zh
+    /// ETA 显示节流：最快 1.5s 变一次，避免数字抖动。
+    private var lastEtaDisplayUpdate = Date.distantPast
+    private static let etaDisplayInterval: TimeInterval = 1.5
 
     func ensureLoaded(language: GlimmerLanguage) async throws {
         self.language = language
@@ -75,6 +78,7 @@ final class ScreeningService {
         chatError = nil
         analysisProgress = 0
         analysisRemainingSeconds = Self.initialEstimateSeconds(frameCount: frameURLs.count)
+        lastEtaDisplayUpdate = Date()
         analysisStage = .analyzingVideo
         await runner.invalidateExplanationSession(ownerID: ownerID)
         defer {
@@ -106,13 +110,17 @@ final class ScreeningService {
                     let secondsPerToken = elapsed / Double(tokensDone)
                     let remaining = Double(tokensTotal - tokensDone) * secondsPerToken + Self.decodeTailSeconds
                     let candidate = max(0, Int(remaining.rounded()))
-                    // 只减不增：估值变大就冻住当前显示，等真实剩余降下来再继续减。
+                    // 只减不增 + 节流：估值变大就冻住显示；下降也最快 1.5s 更新
+                    // 一次，数字像秒表一样稳定跳动而不是抖动。
                     if let shown = self.analysisRemainingSeconds {
-                        if candidate < shown {
+                        if candidate < shown,
+                           Date().timeIntervalSince(self.lastEtaDisplayUpdate) >= Self.etaDisplayInterval {
                             self.analysisRemainingSeconds = candidate
+                            self.lastEtaDisplayUpdate = Date()
                         }
                     } else {
                         self.analysisRemainingSeconds = candidate
+                        self.lastEtaDisplayUpdate = Date()
                     }
                 }
             }

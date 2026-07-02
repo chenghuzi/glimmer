@@ -68,6 +68,7 @@ final class AsdGgufRunner: @unchecked Sendable {
                 }
 
                 self.logMemory("before runtime load")
+                DiagnosticsLog.append("[Gguf] runtime load start")
                 self.releaseNativeRunner()
 
                 do {
@@ -79,6 +80,7 @@ final class AsdGgufRunner: @unchecked Sendable {
                     }
                     self.modelFiles = modelFiles
                     self.logMemory("after runtime load")
+                    DiagnosticsLog.append("[Gguf] runtime load done")
                     continuation.resume()
                 } catch {
                     self.releaseNativeRunner()
@@ -110,6 +112,8 @@ final class AsdGgufRunner: @unchecked Sendable {
                 do {
                     let nativeRunner = try self.activeNativeRunner(ownerID: ownerID)
                     self.logMemory("before generate")
+                    DiagnosticsLog.append("[Gguf] generate start (media=\(mediaPaths.count))")
+                    let generateStart = Date()
                     let output = try nativeRunner.generate(
                         withSystemPrompt: systemPrompt,
                         userPrompt: request.prompt,
@@ -119,8 +123,10 @@ final class AsdGgufRunner: @unchecked Sendable {
                         }
                     )
                     self.logMemory("after generate")
+                    DiagnosticsLog.append("[Gguf] generate done (\(String(format: "%.2f", Date().timeIntervalSince(generateStart)))s)")
                     continuation.resume(returning: output)
                 } catch {
+                    DiagnosticsLog.append("[Gguf] generate failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 }
             }

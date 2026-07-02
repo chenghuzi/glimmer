@@ -76,7 +76,7 @@ enum AudioExtractor {
             )
         }
 
-        VideoAudioPreprocessor.logger.notice("extractWav start: clipped=\(clippedDuration, format: .fixed(precision: 2), privacy: .public)s")
+        VideoAudioPreprocessor.note("extractWav start: clipped=\(String(format: "%.2f", clippedDuration))s")
         var pcm = Data()
         while let buffer = output.copyNextSampleBuffer() {
             if let block = CMSampleBufferGetDataBuffer(buffer) {
@@ -91,7 +91,7 @@ enum AudioExtractor {
             }
             CMSampleBufferInvalidate(buffer)
         }
-        VideoAudioPreprocessor.logger.notice("extractWav decoded: pcmBytes=\(pcm.count, privacy: .public)")
+        VideoAudioPreprocessor.note("extractWav decoded: pcmBytes=\(pcm.count)")
         guard !pcm.isEmpty else {
             return AudioExtractionResult(
                 url: nil,
