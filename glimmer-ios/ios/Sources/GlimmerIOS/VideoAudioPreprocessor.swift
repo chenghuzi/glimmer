@@ -3,17 +3,24 @@ import CoreImage
 import Foundation
 import GlimmerCore
 import ImageIO
+import OSLog
 import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
 #endif
 
 enum VideoAudioPreprocessor {
+    /// 预处理阶段的诊断日志（Notice 级，量极小）：特定视频卡死时，
+    /// 从系统日志的最后一条即可定位停在抽帧第几帧还是音频提取。
+    static let logger = Logger(subsystem: "cn.enactflow.glimmer", category: "Preprocess")
+
     static func prepare(videoURL: URL) async -> PreparedGgufMedia {
         let outputDirectory = makeOutputDirectory()
         let asset = AVURLAsset(url: videoURL)
+        logger.notice("prepare start: loading duration")
         let assetDuration = CMTimeGetSeconds((try? await asset.load(.duration)) ?? .zero)
         let duration = resolvedDuration(for: videoURL, assetDurationSeconds: assetDuration)
+        logger.notice("prepare: duration=\(duration.seconds, format: .fixed(precision: 2), privacy: .public)s source=\(duration.source, privacy: .public)")
 
         async let frames = extractFrames(videoURL, durationSeconds: duration.seconds, outputDirectory: outputDirectory)
         async let audio = AudioExtractor.extractWav(
@@ -23,7 +30,9 @@ enum VideoAudioPreprocessor {
         )
 
         let frameResult = await frames
+        logger.notice("prepare: frames done (\(frameResult.frameURLs.count, privacy: .public))")
         let audioResult = await audio
+        logger.notice("prepare: audio done (hasAudio=\(audioResult.url != nil, privacy: .public))")
 
         return PreparedGgufMedia(
             frameURLs: frameResult.frameURLs,
@@ -269,8 +278,14 @@ enum VideoAudioPreprocessor {
             )
         }
 
+        logger.notice("extractFrames start: target=\(frameCount, privacy: .public) frames over \(durationSeconds, format: .fixed(precision: 2), privacy: .public)s")
+        var decodedCount = 0
         while targetIndex < targetTimes.count, let buffer = output.copyNextSampleBuffer() {
             defer { CMSampleBufferInvalidate(buffer) }
+            decodedCount += 1
+            if decodedCount % 150 == 0 {
+                logger.notice("extractFrames progress: decoded=\(decodedCount, privacy: .public) selected=\(urls.count, privacy: .public)/\(frameCount, privacy: .public)")
+            }
             let presentationTime = CMSampleBufferGetPresentationTimeStamp(buffer)
             let timeSeconds = CMTimeGetSeconds(presentationTime)
             guard timeSeconds.isFinite,
@@ -298,6 +313,7 @@ enum VideoAudioPreprocessor {
             targetIndex += 1
         }
 
+        logger.notice("extractFrames done: decoded=\(decodedCount, privacy: .public) selected=\(urls.count, privacy: .public)/\(frameCount, privacy: .public) readerStatus=\(reader.status.rawValue, privacy: .public)")
         return FrameExtractionResult(frameURLs: urls, diagnostics: diagnostics)
     }
 
