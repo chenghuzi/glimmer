@@ -14,6 +14,10 @@ struct AnalyzingView: View {
     /// 动画 + 模型都跑完时调用一次 — 用于切到报告页。
     /// 模型完成由 outside 通过 `streamFinished=true` 通知。
     var streamFinished: Bool = false
+    /// 分类 prefill 真实进度（0...1），按已求值 token 数加权。
+    var progress: Double = 0
+    /// 预计剩余秒数；nil（首次运行无历史速率）时只显示进度条。
+    var remainingSeconds: Int? = nil
     var onAnimationDone: () -> Void = {}
 
     /// UI 节奏控制：模型实际 token 速度可能很快（真机几百 ms 出完 9 位），
@@ -79,6 +83,30 @@ struct AnalyzingView: View {
                 .foregroundStyle(Color(hex: 0x6A685D))
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            // 真实进度：进度按已分析 token 推进；预计时间先用历史速率起估，
+            // 跑起来后按本次实际速率自校准（见 ScreeningService.analyze）。
+            HStack(spacing: 10) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color(hex: 0xE4E4DC))
+                        Capsule().fill(Color(hex: 0x6A685D))
+                            .frame(width: max(progress > 0 ? 4 : 0, geo.size.width * progress))
+                    }
+                }
+                .frame(height: 4)
+                .animation(.easeOut(duration: 0.4), value: progress)
+
+                if let remainingSeconds, remainingSeconds > 0 {
+                    Text(L10n.analysisEtaText(seconds: remainingSeconds, language: languageStore.language))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color(hex: 0x6A685D))
+                        .fixedSize()
+                        .contentTransition(.numericText(countsDown: true))
+                        .animation(.default, value: remainingSeconds)
+                }
+            }
+            .padding(.top, 2)
 
             // 流式行为词列表 — 自动滚动到最新一行，填满卡片剩余高度
             StreamingBehaviorList(lines: revealedLines)

@@ -64,6 +64,8 @@ struct AnalysisFlowView: View {
                     partialCode: service.report?.labelCode ?? "",
                     onBack: { dismiss() },
                     streamFinished: streamFinished,
+                    progress: service.analysisProgress,
+                    remainingSeconds: service.analysisRemainingSeconds,
                     onAnimationDone: {
                         guard !showReport else { return }
                         persistReportIfNeeded()

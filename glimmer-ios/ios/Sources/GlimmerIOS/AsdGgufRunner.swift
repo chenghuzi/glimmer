@@ -98,7 +98,12 @@ final class AsdGgufRunner: @unchecked Sendable {
         }
     }
 
-    func generate(systemPrompt: String, request: AsdGgufRequest, ownerID: UUID) async throws -> String {
+    func generate(
+        systemPrompt: String,
+        request: AsdGgufRequest,
+        ownerID: UUID,
+        onPrefillProgress: (@Sendable (Int64, Int64) -> Void)? = nil
+    ) async throws -> String {
         let mediaPaths = request.mediaItems.map(\.url.path)
         return try await withCheckedThrowingContinuation { continuation in
             inferenceQueue.async {
@@ -108,7 +113,10 @@ final class AsdGgufRunner: @unchecked Sendable {
                     let output = try nativeRunner.generate(
                         withSystemPrompt: systemPrompt,
                         userPrompt: request.prompt,
-                        mediaPaths: mediaPaths
+                        mediaPaths: mediaPaths,
+                        progress: onPrefillProgress.map { callback in
+                            { done, total in callback(done, total) }
+                        }
                     )
                     self.logMemory("after generate")
                     continuation.resume(returning: output)

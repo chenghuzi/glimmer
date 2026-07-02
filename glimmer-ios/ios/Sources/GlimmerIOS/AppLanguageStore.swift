@@ -89,6 +89,15 @@ enum L10n {
         }
     }
 
+    static func analysisEtaText(seconds: Int, language: GlimmerLanguage) -> String {
+        switch language {
+        case .zh:
+            return "预计还需约 \(seconds) 秒"
+        case .en:
+            return "About \(seconds)s left"
+        }
+    }
+
     static func chatErrorMessage(detail: String, language: GlimmerLanguage) -> String {
         switch language {
         case .zh:

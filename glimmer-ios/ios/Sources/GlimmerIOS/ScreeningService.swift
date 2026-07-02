@@ -8,6 +8,10 @@ final class ScreeningService {
     var isRunning: Bool = false
     var statusText: String = L10n.text(.notLoaded, language: .zh)
     var report: AsdBehaviorReport?
+    /// 分类 prefill 进度（0...1）。按已求值 token 数加权，逐帧推进。
+    var analysisProgress: Double = 0
+    /// 预计剩余秒数。开始时用历史速率估算，跑起来后按实际速率自校准。
+    var analysisRemainingSeconds: Int?
     var chatMessages: [ExplanationChatMessage] = []
     var isChatReady: Bool = false
     var isChatResponding: Bool = false
@@ -50,6 +54,8 @@ final class ScreeningService {
         isChatReady = false
         isChatResponding = false
         chatError = nil
+        analysisProgress = 0
+        analysisRemainingSeconds = Self.initialEstimateSeconds(frameCount: frameURLs.count)
         await runner.invalidateExplanationSession(ownerID: ownerID)
         defer { isRunning = false }
 
@@ -59,12 +65,31 @@ final class ScreeningService {
             audioURL: supportsAudio ? audioURL : nil,
             userPrompt: instruction
         )
+        let generateStart = Date()
         let code = try await runner.generate(
             systemPrompt: AsdGgufPrompts.system,
             request: request,
-            ownerID: ownerID
+            ownerID: ownerID,
+            onPrefillProgress: { [weak self] tokensDone, tokensTotal in
+                Task { @MainActor in
+                    guard let self, self.isRunning, tokensTotal > 0 else { return }
+                    self.analysisProgress = Double(tokensDone) / Double(tokensTotal)
+                    // 跑够半秒后按实际速率自校准，覆盖初始的历史估计。
+                    let elapsed = Date().timeIntervalSince(generateStart)
+                    guard tokensDone > 0, elapsed > 0.5 else { return }
+                    let secondsPerToken = elapsed / Double(tokensDone)
+                    let remaining = Double(tokensTotal - tokensDone) * secondsPerToken + Self.decodeTailSeconds
+                    self.analysisRemainingSeconds = max(0, Int(remaining.rounded()))
+                }
+            }
         )
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        Self.updateSecondsPerFrameEMA(
+            totalSeconds: Date().timeIntervalSince(generateStart),
+            frameCount: frameURLs.count
+        )
+        analysisProgress = 1
+        analysisRemainingSeconds = 0
         try Task.checkCancellation()
         guard !isClosed else { return }
         if let parsed = AsdBehaviorParser.parse(code) {
@@ -162,6 +187,29 @@ final class ScreeningService {
 
     static func assembleJSON(fromCode raw: String) -> String? {
         AsdBehaviorParser.parse(raw)?.jsonString
+    }
+
+    // MARK: - 分析耗时估计（跨次自学习）
+
+    /// 解码 9 位 code 等固定尾巴的预留秒数。
+    private static let decodeTailSeconds = 2.0
+    private static let secondsPerFrameKey = "GlimmerAnalysisSecondsPerFrameEMA"
+
+    /// 开始前的预估：历史「每帧秒数」EMA × 帧数。首次运行无历史返回 nil，
+    /// UI 只显示进度不显示预计时间。
+    static func initialEstimateSeconds(frameCount: Int) -> Int? {
+        let secondsPerFrame = UserDefaults.standard.double(forKey: secondsPerFrameKey)
+        guard secondsPerFrame > 0, frameCount > 0 else { return nil }
+        return Int((secondsPerFrame * Double(frameCount)).rounded())
+    }
+
+    /// 完成一次分析后更新速率 EMA。帧数、画幅、设备差异都会被均值吸收。
+    static func updateSecondsPerFrameEMA(totalSeconds: Double, frameCount: Int) {
+        guard frameCount > 0, totalSeconds > 0 else { return }
+        let sample = totalSeconds / Double(frameCount)
+        let previous = UserDefaults.standard.double(forKey: secondsPerFrameKey)
+        let updated = previous > 0 ? previous * 0.7 + sample * 0.3 : sample
+        UserDefaults.standard.set(updated, forKey: secondsPerFrameKey)
     }
 
     private func assistantContext(

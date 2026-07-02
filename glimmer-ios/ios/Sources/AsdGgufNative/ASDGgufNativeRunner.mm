@@ -362,6 +362,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
 - (BOOL)evaluateFormattedPrompt:(const std::string &)formattedPrompt
                       mediaPaths:(NSArray<NSString *> *)mediaPaths
                            nPast:(llama_pos *)nPast
+                        progress:(ASDGgufPrefillProgressBlock)progress
                            error:(NSError **)error {
     const size_t markerCount = CountOccurrences(formattedPrompt, kMediaMarker);
     if (markerCount != mediaPaths.count) {
@@ -416,16 +417,39 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
 
     const double evalStart = NowSeconds();
     const llama_pos evalStartPos = *nPast;
-    const int32_t evalResult = mtmd_helper_eval_chunks(
-        mtmd_,
-        context_,
-        chunks,
-        *nPast,
-        0,
-        kBatchSize,
-        true,
-        nPast
-    );
+
+    // 逐 chunk 求值（等价于 mtmd_helper_eval_chunks），以便按 token 数上报进度。
+    const size_t chunkCount = mtmd_input_chunks_size(chunks);
+    int64_t tokensTotal = 0;
+    for (size_t index = 0; index < chunkCount; index += 1) {
+        tokensTotal += (int64_t)mtmd_input_chunk_get_n_tokens(mtmd_input_chunks_get(chunks, index));
+    }
+
+    int32_t evalResult = 0;
+    int64_t tokensDone = 0;
+    llama_pos currentPast = *nPast;
+    for (size_t index = 0; index < chunkCount; index += 1) {
+        const mtmd_input_chunk * chunk = mtmd_input_chunks_get(chunks, index);
+        const bool isLast = index + 1 == chunkCount;
+        evalResult = mtmd_helper_eval_chunk_single(
+            mtmd_,
+            context_,
+            chunk,
+            currentPast,
+            0,
+            kBatchSize,
+            isLast,
+            &currentPast
+        );
+        if (evalResult != 0) {
+            break;
+        }
+        tokensDone += (int64_t)mtmd_input_chunk_get_n_tokens(chunk);
+        if (progress != nil) {
+            progress(tokensDone, tokensTotal);
+        }
+    }
+    *nPast = currentPast;
     LogTiming([NSString stringWithFormat:@"prefill eval (media=%lu, nPast %d -> %d)",
                (unsigned long)mediaPaths.count, evalStartPos, *nPast], evalStart);
 
@@ -523,6 +547,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
 - (nullable NSString *)generateWithSystemPrompt:(NSString *)systemPrompt
                                      userPrompt:(NSString *)userPrompt
                                      mediaPaths:(NSArray<NSString *> *)mediaPaths
+                                       progress:(nullable ASDGgufPrefillProgressBlock)progress
                                           error:(NSError **)error {
     if (error != nullptr) {
         *error = nil;
@@ -540,7 +565,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     llama_memory_clear(llama_get_memory(context_), true);
 
     llama_pos nPast = 0;
-    if (![self evaluateFormattedPrompt:formattedPrompt mediaPaths:mediaPaths nPast:&nPast error:error]) {
+    if (![self evaluateFormattedPrompt:formattedPrompt mediaPaths:mediaPaths nPast:&nPast progress:progress error:error]) {
         return nil;
     }
 
@@ -587,7 +612,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     llama_pos nPast = classificationNPast_;
     hasClassificationSession_ = false;
     classificationNPast_ = 0;
-    if (![self evaluateFormattedPrompt:prompt mediaPaths:@[] nPast:&nPast error:error]) {
+    if (![self evaluateFormattedPrompt:prompt mediaPaths:@[] nPast:&nPast progress:nil error:error]) {
         hasExplanationSession_ = false;
         explanationAssistantNeedsClose_ = false;
         explanationNPast_ = 0;
@@ -623,7 +648,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     llama_memory_clear(llama_get_memory(context_), true);
 
     llama_pos nPast = 0;
-    if (![self evaluateFormattedPrompt:formattedPrompt mediaPaths:mediaPaths nPast:&nPast error:error]) {
+    if (![self evaluateFormattedPrompt:formattedPrompt mediaPaths:mediaPaths nPast:&nPast progress:nil error:error]) {
         hasExplanationSession_ = false;
         explanationAssistantNeedsClose_ = false;
         explanationNPast_ = 0;
@@ -651,7 +676,7 @@ std::string TokenToPiece(const llama_vocab * vocab, llama_token token, bool spec
     }
 
     const std::string userTurn = FormatGemma4UserTurn(ToString(message), explanationAssistantNeedsClose_);
-    if (![self evaluateFormattedPrompt:userTurn mediaPaths:@[] nPast:&explanationNPast_ error:error]) {
+    if (![self evaluateFormattedPrompt:userTurn mediaPaths:@[] nPast:&explanationNPast_ progress:nil error:error]) {
         return nil;
     }
     explanationAssistantNeedsClose_ = false;
