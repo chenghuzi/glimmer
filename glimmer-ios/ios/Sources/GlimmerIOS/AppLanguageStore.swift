@@ -184,6 +184,12 @@ enum L10n {
         case (.startAnalysis, .en): return "Start Analysis"
         case (.analyzingMessage, .zh): return "分析需要一些时间，请勿离开当前页面，以免任务中断重来"
         case (.analyzingMessage, .en): return "Analysis may take a moment. Keep this page open to avoid restarting"
+        case (.analysisStagePreparingMedia, .zh): return "正在提取画面与声音…"
+        case (.analysisStagePreparingMedia, .en): return "Extracting frames and audio…"
+        case (.analysisStageAnalyzing, .zh): return "正在分析画面…"
+        case (.analysisStageAnalyzing, .en): return "Analyzing frames…"
+        case (.analysisStageDecoding, .zh): return "正在生成结论…"
+        case (.analysisStageDecoding, .en): return "Generating result…"
         case (.analysisReport, .zh): return "分析报告"
         case (.analysisReport, .en): return "Analysis Report"
         case (.reportConclusion, .zh): return "报告结论"
@@ -264,6 +270,9 @@ enum L10n {
         case captureDoneMessage
         case startAnalysis
         case analyzingMessage
+        case analysisStagePreparingMedia
+        case analysisStageAnalyzing
+        case analysisStageDecoding
         case analysisReport
         case reportConclusion
         case reportFootnote

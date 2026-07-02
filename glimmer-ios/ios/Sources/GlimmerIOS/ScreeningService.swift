@@ -11,7 +11,26 @@ final class ScreeningService {
     /// 分类 prefill 进度（0...1）。按已求值 token 数加权，逐帧推进。
     var analysisProgress: Double = 0
     /// 预计剩余秒数。开始时用历史速率估算，跑起来后按实际速率自校准。
+    /// 展示约定：只减不增——新估值变大时冻住当前显示值，避免数字来回跳。
     var analysisRemainingSeconds: Int?
+    /// 当前阶段，驱动分析页的"正在做什么"文案。
+    var analysisStage: AnalysisStage = .idle
+
+    enum AnalysisStage {
+        case idle
+        case preparingMedia
+        case analyzingVideo
+        case decoding
+
+        func text(language: GlimmerLanguage) -> String? {
+            switch self {
+            case .idle: return nil
+            case .preparingMedia: return L10n.text(.analysisStagePreparingMedia, language: language)
+            case .analyzingVideo: return L10n.text(.analysisStageAnalyzing, language: language)
+            case .decoding: return L10n.text(.analysisStageDecoding, language: language)
+            }
+        }
+    }
     var chatMessages: [ExplanationChatMessage] = []
     var isChatReady: Bool = false
     var isChatResponding: Bool = false
@@ -56,8 +75,12 @@ final class ScreeningService {
         chatError = nil
         analysisProgress = 0
         analysisRemainingSeconds = Self.initialEstimateSeconds(frameCount: frameURLs.count)
+        analysisStage = .analyzingVideo
         await runner.invalidateExplanationSession(ownerID: ownerID)
-        defer { isRunning = false }
+        defer {
+            isRunning = false
+            analysisStage = .idle
+        }
 
         let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
         let request = AsdGgufRequestBuilder.build(
@@ -74,12 +97,23 @@ final class ScreeningService {
                 Task { @MainActor in
                     guard let self, self.isRunning, tokensTotal > 0 else { return }
                     self.analysisProgress = Double(tokensDone) / Double(tokensTotal)
+                    if tokensDone >= tokensTotal {
+                        self.analysisStage = .decoding
+                    }
                     // 跑够半秒后按实际速率自校准，覆盖初始的历史估计。
                     let elapsed = Date().timeIntervalSince(generateStart)
                     guard tokensDone > 0, elapsed > 0.5 else { return }
                     let secondsPerToken = elapsed / Double(tokensDone)
                     let remaining = Double(tokensTotal - tokensDone) * secondsPerToken + Self.decodeTailSeconds
-                    self.analysisRemainingSeconds = max(0, Int(remaining.rounded()))
+                    let candidate = max(0, Int(remaining.rounded()))
+                    // 只减不增：估值变大就冻住当前显示，等真实剩余降下来再继续减。
+                    if let shown = self.analysisRemainingSeconds {
+                        if candidate < shown {
+                            self.analysisRemainingSeconds = candidate
+                        }
+                    } else {
+                        self.analysisRemainingSeconds = candidate
+                    }
                 }
             }
         )

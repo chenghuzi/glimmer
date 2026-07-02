@@ -17,7 +17,10 @@ struct AnalyzingView: View {
     /// 分类 prefill 真实进度（0...1），按已求值 token 数加权。
     var progress: Double = 0
     /// 预计剩余秒数；nil（首次运行无历史速率）时只显示进度条。
+    /// 上游保证只减不增，这里直接展示、不做数字动画。
     var remainingSeconds: Int? = nil
+    /// 当前阶段文案（提取画面 / 分析画面 / 生成结论），nil 时隐藏。
+    var stageText: String? = nil
     var onAnimationDone: () -> Void = {}
 
     /// UI 节奏控制：模型实际 token 速度可能很快（真机几百 ms 出完 9 位），
@@ -85,8 +88,8 @@ struct AnalyzingView: View {
             }
 
             // 真实进度：进度按已分析 token 推进；预计时间先用历史速率起估，
-            // 跑起来后按本次实际速率自校准（见 ScreeningService.analyze）。
-            HStack(spacing: 10) {
+            // 跑起来后按实际速率自校准且只减不增（见 ScreeningService.analyze）。
+            VStack(alignment: .leading, spacing: 6) {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color(hex: 0xE4E4DC))
@@ -97,13 +100,20 @@ struct AnalyzingView: View {
                 .frame(height: 4)
                 .animation(.easeOut(duration: 0.4), value: progress)
 
-                if let remainingSeconds, remainingSeconds > 0 {
-                    Text(L10n.analysisEtaText(seconds: remainingSeconds, language: languageStore.language))
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color(hex: 0x6A685D))
-                        .fixedSize()
-                        .contentTransition(.numericText(countsDown: true))
-                        .animation(.default, value: remainingSeconds)
+                HStack(spacing: 8) {
+                    if let stageText {
+                        Text(stageText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: 0x6A685D))
+                    }
+                    Spacer(minLength: 8)
+                    if let remainingSeconds, remainingSeconds > 0 {
+                        // 数字直接变化，不做递增/递减动画。
+                        Text(L10n.analysisEtaText(seconds: remainingSeconds, language: languageStore.language))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: 0x6A685D))
+                            .fixedSize()
+                    }
                 }
             }
             .padding(.top, 2)
