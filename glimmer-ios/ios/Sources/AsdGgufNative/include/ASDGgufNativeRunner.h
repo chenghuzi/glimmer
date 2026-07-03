@@ -15,9 +15,14 @@ FOUNDATION_EXPORT NSString * const ASDGgufNativeRunnerErrorDomain;
 /// 当前 mmproj 是否支持音频输入。纯视觉投影器为 NO，调用方应跳过音频。
 @property (nonatomic, readonly) BOOL supportsAudio;
 
+/// prefill 进度回调：tokensDone/tokensTotal 为已求值/总 token 数
+/// （图像 chunk 按其实际 token 数计权）。在推理线程上同步调用。
+typedef void (^ASDGgufPrefillProgressBlock)(int64_t tokensDone, int64_t tokensTotal);
+
 - (nullable NSString *)generateWithSystemPrompt:(NSString *)systemPrompt
                                      userPrompt:(NSString *)userPrompt
                                      mediaPaths:(NSArray<NSString *> *)mediaPaths
+                                       progress:(nullable ASDGgufPrefillProgressBlock)progress
                                           error:(NSError **)error;
 
 - (BOOL)beginExplanationSessionWithSystemPrompt:(NSString *)systemPrompt
@@ -26,11 +31,24 @@ FOUNDATION_EXPORT NSString * const ASDGgufNativeRunnerErrorDomain;
                                      mediaPaths:(NSArray<NSString *> *)mediaPaths
                                           error:(NSError **)error;
 
+/// 分类刚结束时的快路径：不清 KV cache，在同一会话上用纯文本追加
+/// 「解释任务指令 + 预填结果上下文」，媒体不重新编码。
+/// 仅在最近一次 generate 成功且之后未清空会话时可用，否则返回 NO，
+/// 调用方应回落到 beginExplanationSessionWithSystemPrompt 全量 prefill。
+- (BOOL)continueExplanationSessionWithUserInstruction:(NSString *)userInstruction
+                                     assistantContext:(NSString *)assistantContext
+                                                error:(NSError **)error;
+
 - (nullable NSString *)sendExplanationUserMessage:(NSString *)message
                                   maxOutputTokens:(NSInteger)maxOutputTokens
                                             error:(NSError **)error;
 
 - (void)invalidateExplanationSession;
+
+/// 跨线程请求中断当前推理（无锁，可从任意线程调用）。置位后 llama 的
+/// abort 回调让进行中的 decode 尽快返回错误；每个新任务入口自动复位。
+/// 用于用户离开分析页时，避免被放弃的长推理堵塞后续任务。
+- (void)requestCancelActiveWork;
 
 @end
 

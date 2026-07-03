@@ -59,6 +59,25 @@ public enum AsdExplanationPrompts {
         }
     }
 
+    /// 分类会话纯文本续接用的指令：媒体已在 KV cache 里（分类消息中），
+    /// 把解释助手的角色设定 + 任务说明合并成一个 user turn 发进去。
+    public static func continuationInstruction(language: GlimmerLanguage) -> String {
+        switch language {
+        case .zh:
+            return """
+            接下来的对话切换为解释任务。\(system)
+
+            请继续参考本轮对话开头已提供的视频帧和音频，它们与刚完成的行为筛查来自同一段视频。不要重新输出 9 位二进制标签码，也不要重新分类。下一条 assistant 消息会提供应用端已解析好的筛查结果；之后用户继续提问时，请基于当前视频、音频和这份结果自然回答。
+            """
+        case .en:
+            return """
+            The conversation now switches to an explanation task. \(system(language: .en))
+
+            Keep referring to the video frames and audio already provided earlier in this conversation; they come from the same video that just completed behavior screening. Do not output the 9-bit binary code again and do not reclassify. The next assistant message will provide the app-parsed screening result; after that, answer the user's questions naturally based on the current video, audio, and that result.
+            """
+        }
+    }
+
     public static func assistantResultContext(report: AsdBehaviorReport) -> String {
         assistantResultContext(report: report, language: .zh)
     }

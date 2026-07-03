@@ -3,17 +3,30 @@ import CoreImage
 import Foundation
 import GlimmerCore
 import ImageIO
+import OSLog
 import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
 #endif
 
 enum VideoAudioPreprocessor {
+    /// 预处理阶段的诊断日志（Notice 级，量极小）：特定视频卡死时，
+    /// 从最后一条即可定位停在抽帧第几帧还是音频提取。
+    static let logger = Logger(subsystem: "cn.enactflow.glimmer", category: "Preprocess")
+
+    /// 同时打系统日志与落盘文件（连接不稳时靠文件事后取证）。
+    static func note(_ message: String) {
+        logger.notice("\(message, privacy: .public)")
+        DiagnosticsLog.append("[Preprocess] \(message)")
+    }
+
     static func prepare(videoURL: URL) async -> PreparedGgufMedia {
         let outputDirectory = makeOutputDirectory()
         let asset = AVURLAsset(url: videoURL)
+        note("prepare start: loading duration")
         let assetDuration = CMTimeGetSeconds((try? await asset.load(.duration)) ?? .zero)
         let duration = resolvedDuration(for: videoURL, assetDurationSeconds: assetDuration)
+        note("prepare: duration=\(String(format: "%.2f", duration.seconds))s source=\(duration.source)")
 
         async let frames = extractFrames(videoURL, durationSeconds: duration.seconds, outputDirectory: outputDirectory)
         async let audio = AudioExtractor.extractWav(
@@ -23,7 +36,9 @@ enum VideoAudioPreprocessor {
         )
 
         let frameResult = await frames
+        note("prepare: frames done (\(frameResult.frameURLs.count))")
         let audioResult = await audio
+        note("prepare: audio done (hasAudio=\(audioResult.url != nil))")
 
         return PreparedGgufMedia(
             frameURLs: frameResult.frameURLs,
@@ -178,17 +193,46 @@ enum VideoAudioPreprocessor {
         var urls: [URL] = []
         var diagnostics: [GgufFrameDiagnostics] = []
         var targetIndex = 0
+        // 只按时间戳选帧，延迟到命中采样点才做 CIContext 渲染 + JPEG 编码；
+        // 未命中的帧只留一个 CVPixelBuffer 引用（任意时刻至多持有 2 个，
+        // 池会为被持有的 buffer 另行分配，不会被解码器覆写）。
         var previousFrame: DecodedVideoFrame?
+        // 同一帧可能被相邻多个采样点选中（源 fps 低于采样率、或视频尾部补帧），
+        // 按时间戳缓存最近一次渲染结果，避免重复渲染。
+        var renderCache: RenderedFrame?
+
+        func renderedFrame(for frame: DecodedVideoFrame) -> RenderedFrame? {
+            if let renderCache, renderCache.timeSeconds == frame.timeSeconds {
+                return renderCache
+            }
+            guard let image = makeCGImage(
+                from: frame.pixelBuffer,
+                preferredTransform: preferredTransform,
+                context: ciContext
+            ), let rendered = renderFrameJPEG(image) else {
+                return nil
+            }
+            let result = RenderedFrame(
+                timeSeconds: frame.timeSeconds,
+                data: rendered.data,
+                outputWidth: rendered.width,
+                outputHeight: rendered.height,
+                sourceWidth: image.width,
+                sourceHeight: image.height
+            )
+            renderCache = result
+            return result
+        }
 
         func appendFrame(_ frame: DecodedVideoFrame, requestedTimeSeconds: Double, index: Int) {
-            guard let rendered = renderFrameJPEG(frame.image) else {
+            guard let rendered = renderedFrame(for: frame) else {
                 diagnostics.append(
                     GgufFrameDiagnostics(
                         index: index,
                         requestedTimeSeconds: requestedTimeSeconds,
                         actualTimeSeconds: frame.timeSeconds,
-                        sourceWidth: frame.image.width,
-                        sourceHeight: frame.image.height,
+                        sourceWidth: nil,
+                        sourceHeight: nil,
                         outputWidth: nil,
                         outputHeight: nil,
                         path: nil,
@@ -209,10 +253,10 @@ enum VideoAudioPreprocessor {
                         index: index,
                         requestedTimeSeconds: requestedTimeSeconds,
                         actualTimeSeconds: frame.timeSeconds,
-                        sourceWidth: frame.image.width,
-                        sourceHeight: frame.image.height,
-                        outputWidth: rendered.width,
-                        outputHeight: rendered.height,
+                        sourceWidth: rendered.sourceWidth,
+                        sourceHeight: rendered.sourceHeight,
+                        outputWidth: rendered.outputWidth,
+                        outputHeight: rendered.outputHeight,
                         path: outputURL.path,
                         byteCount: nil,
                         sha256: nil,
@@ -228,10 +272,10 @@ enum VideoAudioPreprocessor {
                     index: index,
                     requestedTimeSeconds: requestedTimeSeconds,
                     actualTimeSeconds: frame.timeSeconds,
-                    sourceWidth: frame.image.width,
-                    sourceHeight: frame.image.height,
-                    outputWidth: rendered.width,
-                    outputHeight: rendered.height,
+                    sourceWidth: rendered.sourceWidth,
+                    sourceHeight: rendered.sourceHeight,
+                    outputWidth: rendered.outputWidth,
+                    outputHeight: rendered.outputHeight,
                     path: outputURL.path,
                     byteCount: rendered.data.count,
                     sha256: MediaDiagnostics.sha256Hex(data: rendered.data),
@@ -240,21 +284,22 @@ enum VideoAudioPreprocessor {
             )
         }
 
+        note("extractFrames start: target=\(frameCount) frames over \(String(format: "%.2f", durationSeconds))s")
+        var decodedCount = 0
         while targetIndex < targetTimes.count, let buffer = output.copyNextSampleBuffer() {
             defer { CMSampleBufferInvalidate(buffer) }
+            decodedCount += 1
+            if decodedCount % 150 == 0 {
+                note("extractFrames progress: decoded=\(decodedCount) selected=\(urls.count)/\(frameCount)")
+            }
             let presentationTime = CMSampleBufferGetPresentationTimeStamp(buffer)
             let timeSeconds = CMTimeGetSeconds(presentationTime)
             guard timeSeconds.isFinite,
-                  let pixelBuffer = CMSampleBufferGetImageBuffer(buffer),
-                  let image = makeCGImage(
-                    from: pixelBuffer,
-                    preferredTransform: preferredTransform,
-                    context: ciContext
-                  ) else {
+                  let pixelBuffer = CMSampleBufferGetImageBuffer(buffer) else {
                 continue
             }
 
-            let currentFrame = DecodedVideoFrame(timeSeconds: timeSeconds, image: image)
+            let currentFrame = DecodedVideoFrame(timeSeconds: timeSeconds, pixelBuffer: pixelBuffer)
             while targetIndex < targetTimes.count, timeSeconds >= targetTimes[targetIndex] {
                 let targetTime = targetTimes[targetIndex]
                 let chosenFrame = nearestFrame(
@@ -274,6 +319,7 @@ enum VideoAudioPreprocessor {
             targetIndex += 1
         }
 
+        note("extractFrames done: decoded=\(decodedCount) selected=\(urls.count)/\(frameCount) readerStatus=\(reader.status.rawValue)")
         return FrameExtractionResult(frameURLs: urls, diagnostics: diagnostics)
     }
 
@@ -389,5 +435,14 @@ private struct MediaDuration {
 
 private struct DecodedVideoFrame {
     let timeSeconds: Double
-    let image: CGImage
+    let pixelBuffer: CVPixelBuffer
+}
+
+private struct RenderedFrame {
+    let timeSeconds: Double
+    let data: Data
+    let outputWidth: Int
+    let outputHeight: Int
+    let sourceWidth: Int
+    let sourceHeight: Int
 }

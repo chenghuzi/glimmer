@@ -8,6 +8,32 @@ final class ScreeningService {
     var isRunning: Bool = false
     var statusText: String = L10n.text(.notLoaded, language: .zh)
     var report: AsdBehaviorReport?
+    /// 分类 prefill 进度（0...1）。按已求值 token 数加权，逐帧推进。
+    var analysisProgress: Double = 0
+    /// 预计剩余秒数。开始时用历史速率估算，跑起来后按实际速率自校准。
+    /// 展示约定：只减不增——新估值变大时冻住当前显示值，避免数字来回跳。
+    var analysisRemainingSeconds: Int?
+    /// 当前阶段，驱动分析页的"正在做什么"文案。
+    var analysisStage: AnalysisStage = .idle
+
+    enum AnalysisStage {
+        case idle
+        case preparingMedia
+        /// 预处理已完成，在等模型加载（冷加载或排队等上一个任务释放）。
+        case loadingModel
+        case analyzingVideo
+        case decoding
+
+        func text(language: GlimmerLanguage) -> String? {
+            switch self {
+            case .idle: return nil
+            case .preparingMedia: return L10n.text(.analysisStagePreparingMedia, language: language)
+            case .loadingModel: return L10n.text(.analysisStageLoadingModel, language: language)
+            case .analyzingVideo: return L10n.text(.analysisStageAnalyzing, language: language)
+            case .decoding: return L10n.text(.analysisStageDecoding, language: language)
+            }
+        }
+    }
     var chatMessages: [ExplanationChatMessage] = []
     var isChatReady: Bool = false
     var isChatResponding: Bool = false
@@ -17,6 +43,9 @@ final class ScreeningService {
     private let runner = AsdGgufRunner.shared
     private var isClosed = false
     private var language: GlimmerLanguage = .zh
+    /// ETA 显示节流：最快 1.5s 变一次，避免数字抖动。
+    private var lastEtaDisplayUpdate = Date.distantPast
+    private static let etaDisplayInterval: TimeInterval = 1.5
 
     func ensureLoaded(language: GlimmerLanguage) async throws {
         self.language = language
@@ -50,8 +79,15 @@ final class ScreeningService {
         isChatReady = false
         isChatResponding = false
         chatError = nil
+        analysisProgress = 0
+        analysisRemainingSeconds = Self.initialEstimateSeconds(frameCount: frameURLs.count)
+        lastEtaDisplayUpdate = Date()
+        analysisStage = .analyzingVideo
         await runner.invalidateExplanationSession(ownerID: ownerID)
-        defer { isRunning = false }
+        defer {
+            isRunning = false
+            analysisStage = .idle
+        }
 
         let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
         let request = AsdGgufRequestBuilder.build(
@@ -59,12 +95,46 @@ final class ScreeningService {
             audioURL: supportsAudio ? audioURL : nil,
             userPrompt: instruction
         )
+        let generateStart = Date()
         let code = try await runner.generate(
             systemPrompt: AsdGgufPrompts.system,
             request: request,
-            ownerID: ownerID
+            ownerID: ownerID,
+            onPrefillProgress: { [weak self] tokensDone, tokensTotal in
+                Task { @MainActor in
+                    guard let self, self.isRunning, tokensTotal > 0 else { return }
+                    self.analysisProgress = Double(tokensDone) / Double(tokensTotal)
+                    if tokensDone >= tokensTotal {
+                        self.analysisStage = .decoding
+                    }
+                    // 跑够半秒后按实际速率自校准，覆盖初始的历史估计。
+                    let elapsed = Date().timeIntervalSince(generateStart)
+                    guard tokensDone > 0, elapsed > 0.5 else { return }
+                    let secondsPerToken = elapsed / Double(tokensDone)
+                    let remaining = Double(tokensTotal - tokensDone) * secondsPerToken + Self.decodeTailSeconds
+                    let candidate = max(0, Int(remaining.rounded()))
+                    // 只减不增 + 节流：估值变大就冻住显示；下降也最快 1.5s 更新
+                    // 一次，数字像秒表一样稳定跳动而不是抖动。
+                    if let shown = self.analysisRemainingSeconds {
+                        if candidate < shown,
+                           Date().timeIntervalSince(self.lastEtaDisplayUpdate) >= Self.etaDisplayInterval {
+                            self.analysisRemainingSeconds = candidate
+                            self.lastEtaDisplayUpdate = Date()
+                        }
+                    } else {
+                        self.analysisRemainingSeconds = candidate
+                        self.lastEtaDisplayUpdate = Date()
+                    }
+                }
+            }
         )
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        Self.updateSecondsPerFrameEMA(
+            totalSeconds: Date().timeIntervalSince(generateStart),
+            frameCount: frameURLs.count
+        )
+        analysisProgress = 1
+        analysisRemainingSeconds = 0
         try Task.checkCancellation()
         guard !isClosed else { return }
         if let parsed = AsdBehaviorParser.parse(code) {
@@ -89,19 +159,32 @@ final class ScreeningService {
         chatError = nil
         chatMessages = initialMessages
 
-        await runner.invalidateExplanationSession(ownerID: ownerID)
-        let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
-        let request = AsdGgufRequestBuilder.build(
-            frameURLs: frameURLs,
-            audioURL: supportsAudio ? audioURL : nil,
-            userPrompt: AsdExplanationPrompts.userInstruction(language: language)
-        )
-        try await runner.beginExplanationSession(
-            systemPrompt: AsdExplanationPrompts.system(language: language),
-            request: request,
-            assistantContext: assistantContext(report: report, previousMessages: initialMessages, language: language),
-            ownerID: ownerID
-        )
+        let context = assistantContext(report: report, previousMessages: initialMessages, language: language)
+        do {
+            // 快路径：分析刚结束时 KV cache 里还留着本次媒体，纯文本续接，
+            // 不重编码 32 帧；历史报告重开或模型已重载时走全量 prefill。
+            try await runner.continueExplanationSession(
+                userInstruction: AsdExplanationPrompts.continuationInstruction(language: language),
+                assistantContext: context,
+                ownerID: ownerID
+            )
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            await runner.invalidateExplanationSession(ownerID: ownerID)
+            let supportsAudio = await runner.supportsAudio(ownerID: ownerID)
+            let request = AsdGgufRequestBuilder.build(
+                frameURLs: frameURLs,
+                audioURL: supportsAudio ? audioURL : nil,
+                userPrompt: AsdExplanationPrompts.userInstruction(language: language)
+            )
+            try await runner.beginExplanationSession(
+                systemPrompt: AsdExplanationPrompts.system(language: language),
+                request: request,
+                assistantContext: context,
+                ownerID: ownerID
+            )
+        }
         try Task.checkCancellation()
         guard !isClosed else { return }
         isChatReady = true
@@ -143,12 +226,38 @@ final class ScreeningService {
         isRunning = false
         isChatReady = false
         isChatResponding = false
+        // 先中断在途推理再排队卸载，否则 shutdown 会被 30-50s 的
+        // generate 堵在队列后面，下一次分析也跟着干等。
+        runner.cancelActiveWork()
         await runner.shutdown(ownerID: ownerID)
         statusText = L10n.text(.notLoaded, language: language)
     }
 
     static func assembleJSON(fromCode raw: String) -> String? {
         AsdBehaviorParser.parse(raw)?.jsonString
+    }
+
+    // MARK: - 分析耗时估计（跨次自学习）
+
+    /// 解码 9 位 code 等固定尾巴的预留秒数。
+    private static let decodeTailSeconds = 2.0
+    private static let secondsPerFrameKey = "GlimmerAnalysisSecondsPerFrameEMA"
+
+    /// 开始前的预估：历史「每帧秒数」EMA × 帧数。首次运行无历史返回 nil，
+    /// UI 只显示进度不显示预计时间。
+    static func initialEstimateSeconds(frameCount: Int) -> Int? {
+        let secondsPerFrame = UserDefaults.standard.double(forKey: secondsPerFrameKey)
+        guard secondsPerFrame > 0, frameCount > 0 else { return nil }
+        return Int((secondsPerFrame * Double(frameCount)).rounded())
+    }
+
+    /// 完成一次分析后更新速率 EMA。帧数、画幅、设备差异都会被均值吸收。
+    static func updateSecondsPerFrameEMA(totalSeconds: Double, frameCount: Int) {
+        guard frameCount > 0, totalSeconds > 0 else { return }
+        let sample = totalSeconds / Double(frameCount)
+        let previous = UserDefaults.standard.double(forKey: secondsPerFrameKey)
+        let updated = previous > 0 ? previous * 0.7 + sample * 0.3 : sample
+        UserDefaults.standard.set(updated, forKey: secondsPerFrameKey)
     }
 
     private func assistantContext(

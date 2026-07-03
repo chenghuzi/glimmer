@@ -14,8 +14,17 @@ struct AnalyzingView: View {
     /// 动画 + 模型都跑完时调用一次 — 用于切到报告页。
     /// 模型完成由 outside 通过 `streamFinished=true` 通知。
     var streamFinished: Bool = false
+    /// 分类 prefill 真实进度（0...1），按已求值 token 数加权。
+    var progress: Double = 0
+    /// 预计剩余秒数；nil（首次运行无历史速率）时只显示进度条。
+    /// 上游保证只减不增，这里直接展示、不做数字动画。
+    var remainingSeconds: Int? = nil
+    /// 当前阶段文案（提取画面 / 分析画面 / 生成结论），nil 时隐藏。
+    var stageText: String? = nil
     var onAnimationDone: () -> Void = {}
 
+    /// 三连击分析卡片弹出诊断日志分享（连接不稳时给测试同学的导出通道）。
+    @State private var showDiagnosticsShare = false
     /// UI 节奏控制：模型实际 token 速度可能很快（真机几百 ms 出完 9 位），
     /// 我们不让 UI 跟着模型走，固定 0.9s/项 揭示，这样用户能看清每条行为词。
     @State private var revealedCount: Int = 0
@@ -80,6 +89,37 @@ struct AnalyzingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            // 真实进度：进度按已分析 token 推进；预计时间先用历史速率起估，
+            // 跑起来后按实际速率自校准且只减不增（见 ScreeningService.analyze）。
+            VStack(alignment: .leading, spacing: 6) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color(hex: 0xE4E4DC))
+                        Capsule().fill(Color(hex: 0x6A685D))
+                            .frame(width: max(progress > 0 ? 4 : 0, geo.size.width * progress))
+                    }
+                }
+                .frame(height: 4)
+                .animation(.easeOut(duration: 0.4), value: progress)
+
+                HStack(spacing: 8) {
+                    if let stageText {
+                        Text(stageText)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: 0x6A685D))
+                    }
+                    Spacer(minLength: 8)
+                    if let remainingSeconds, remainingSeconds > 0 {
+                        // 数字直接变化，不做递增/递减动画。
+                        Text(L10n.analysisEtaText(seconds: remainingSeconds, language: languageStore.language))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: 0x6A685D))
+                            .fixedSize()
+                    }
+                }
+            }
+            .padding(.top, 2)
+
             // 流式行为词列表 — 自动滚动到最新一行，填满卡片剩余高度
             StreamingBehaviorList(lines: revealedLines)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -113,11 +153,35 @@ struct AnalyzingView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(hex: 0xF6F6F5), in: RoundedRectangle(cornerRadius: 24))
+        .onTapGesture(count: 3) { showDiagnosticsShare = true }
+        .sheet(isPresented: $showDiagnosticsShare) {
+            DiagnosticsShareSheet()
+        }
     }
 
     /// User-facing behavior names in internal bit order.
     static func featureNames(language: GlimmerLanguage) -> [String] {
         AsdBehaviorParser.labels.map { $0.name(language: language) }
+    }
+}
+
+// MARK: - 诊断日志分享（三连击分析卡片触发）
+
+private struct DiagnosticsShareSheet: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("诊断日志")
+                .font(.headline)
+            if FileManager.default.fileExists(atPath: DiagnosticsLog.fileURL.path) {
+                ShareLink(item: DiagnosticsLog.fileURL) {
+                    Label("导出 diagnostics.log", systemImage: "square.and.arrow.up")
+                }
+            } else {
+                Text("暂无日志")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(24)
     }
 }
 

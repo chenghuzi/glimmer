@@ -64,6 +64,9 @@ struct AnalysisFlowView: View {
                     partialCode: service.report?.labelCode ?? "",
                     onBack: { dismiss() },
                     streamFinished: streamFinished,
+                    progress: service.analysisProgress,
+                    remainingSeconds: service.analysisRemainingSeconds,
+                    stageText: service.analysisStage.text(language: activeReportLanguage),
                     onAnimationDone: {
                         guard !showReport else { return }
                         persistReportIfNeeded()
@@ -100,14 +103,22 @@ struct AnalysisFlowView: View {
     private func run() async {
         let language = languageStore.language
         reportLanguage = language
+        // 模型加载（inferenceQueue）与视频预处理（AVFoundation）并行；
+        // analyze 内部会再走一次 ensureLoaded，命中"已加载复用"直接返回。
+        service.analysisStage = .preparingMedia
+        async let preload: Void = service.ensureLoaded(language: language)
         let prepared = await VideoAudioPreprocessor.prepare(videoURL: videoURL)
         guard !Task.isCancelled else { return }
         media = prepared
         guard !prepared.frameURLs.isEmpty else {
+            service.analysisStage = .idle
             service.output = L10n.text(.noVideoFrames, language: language)
             return
         }
         do {
+            // 预处理已完成；接下来等模型（冷加载或排队等上一个任务退出）。
+            service.analysisStage = .loadingModel
+            try await preload
             try await service.analyze(
                 frameURLs: prepared.frameURLs,
                 audioURL: prepared.audioURL,

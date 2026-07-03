@@ -36,7 +36,17 @@ final class AsdGgufRunner: @unchecked Sendable {
     static let shared = AsdGgufRunner()
 
     private var modelFiles: AsdGgufModelFiles?
-    private var nativeRunner: ASDGgufNativeRunner?
+    private var nativeRunner: ASDGgufNativeRunner? {
+        didSet {
+            cancellableRunnerLock.lock()
+            cancellableRunner = nativeRunner
+            cancellableRunnerLock.unlock()
+        }
+    }
+    /// 供跨线程取消用的运行时引用：cancelActiveWork 不能等 inferenceQueue
+    ///（要取消的正是队列上跑着的任务），单独加锁同步。
+    private let cancellableRunnerLock = NSLock()
+    private var cancellableRunner: ASDGgufNativeRunner?
     private var lease = GgufRuntimeLease()
     private let inferenceQueue = DispatchQueue(label: "com.glimmer.asd.gguf.inference", qos: .userInitiated)
     private let logger = Logger(subsystem: "cn.enactflow.glimmer", category: "GgufRuntime")
@@ -53,15 +63,22 @@ final class AsdGgufRunner: @unchecked Sendable {
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             inferenceQueue.async {
+                let ownerChanged = !self.lease.isActive(ownerID)
                 self.lease.acquire(ownerID)
 
                 if self.modelFiles == modelFiles, self.nativeRunner != nil {
+                    if ownerChanged {
+                        // 换 owner 复用 runtime 时清掉上一个流程留下的会话，
+                        // 防止新 owner 的解释对话续接到旧视频的 KV cache。
+                        self.nativeRunner?.invalidateExplanationSession()
+                    }
                     self.logMemory("reuse loaded runtime")
                     continuation.resume()
                     return
                 }
 
                 self.logMemory("before runtime load")
+                DiagnosticsLog.append("[Gguf] runtime load start")
                 self.releaseNativeRunner()
 
                 do {
@@ -73,6 +90,7 @@ final class AsdGgufRunner: @unchecked Sendable {
                     }
                     self.modelFiles = modelFiles
                     self.logMemory("after runtime load")
+                    DiagnosticsLog.append("[Gguf] runtime load done")
                     continuation.resume()
                 } catch {
                     self.releaseNativeRunner()
@@ -92,21 +110,33 @@ final class AsdGgufRunner: @unchecked Sendable {
         }
     }
 
-    func generate(systemPrompt: String, request: AsdGgufRequest, ownerID: UUID) async throws -> String {
+    func generate(
+        systemPrompt: String,
+        request: AsdGgufRequest,
+        ownerID: UUID,
+        onPrefillProgress: (@Sendable (Int64, Int64) -> Void)? = nil
+    ) async throws -> String {
         let mediaPaths = request.mediaItems.map(\.url.path)
         return try await withCheckedThrowingContinuation { continuation in
             inferenceQueue.async {
                 do {
                     let nativeRunner = try self.activeNativeRunner(ownerID: ownerID)
                     self.logMemory("before generate")
+                    DiagnosticsLog.append("[Gguf] generate start (media=\(mediaPaths.count))")
+                    let generateStart = Date()
                     let output = try nativeRunner.generate(
                         withSystemPrompt: systemPrompt,
                         userPrompt: request.prompt,
-                        mediaPaths: mediaPaths
+                        mediaPaths: mediaPaths,
+                        progress: onPrefillProgress.map { callback in
+                            { done, total in callback(done, total) }
+                        }
                     )
                     self.logMemory("after generate")
+                    DiagnosticsLog.append("[Gguf] generate done (\(String(format: "%.2f", Date().timeIntervalSince(generateStart)))s)")
                     continuation.resume(returning: output)
                 } catch {
+                    DiagnosticsLog.append("[Gguf] generate failed: \(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 }
             }
@@ -133,6 +163,31 @@ final class AsdGgufRunner: @unchecked Sendable {
                         mediaPaths: mediaPaths
                     )
                     self.logMemory("after explanation prefill")
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    /// 分类刚结束时的快路径：复用 KV cache 纯文本续接解释会话，不重编码媒体。
+    /// 无可续接的分类会话（历史报告重开、模型重载）时抛错，调用方回落全量 prefill。
+    func continueExplanationSession(
+        userInstruction: String,
+        assistantContext: String,
+        ownerID: UUID
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            inferenceQueue.async {
+                do {
+                    let nativeRunner = try self.activeNativeRunner(ownerID: ownerID)
+                    self.logMemory("before explanation continue")
+                    try nativeRunner.continueExplanationSession(
+                        withUserInstruction: userInstruction,
+                        assistantContext: assistantContext
+                    )
+                    self.logMemory("after explanation continue")
                     continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
@@ -173,6 +228,16 @@ final class AsdGgufRunner: @unchecked Sendable {
                 continuation.resume()
             }
         }
+    }
+
+    /// 立即请求中断正在进行的推理（不排队，任意线程可调）。被放弃的长推理
+    /// 会在 1-2 秒内报错退出，释放 inferenceQueue；新任务入口自动复位标志。
+    func cancelActiveWork() {
+        cancellableRunnerLock.lock()
+        let runner = cancellableRunner
+        cancellableRunnerLock.unlock()
+        runner?.requestCancelActiveWork()
+        DiagnosticsLog.append("[Gguf] cancel requested")
     }
 
     func shutdown(ownerID: UUID) async {
