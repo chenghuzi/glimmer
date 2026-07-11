@@ -35,6 +35,8 @@ public struct GalleryRoot: View {
             // 让 home 一启动就触发 action sheet，用来截图验证样式
             SourceSheetDemo()
         case "analyzing":    AnalyzingDemoContainer()
+        // 真实主流程（含选视频 + 10–30s 时长校验），跳过模型下载门，供模拟器手测校验
+        case "mainflow":     MainFlow()
         case "report":       placeholder("report 未实现")
         case "qa":           placeholder("qa 未实现")
         case "analyze":
