@@ -244,6 +244,12 @@ enum L10n {
         case (.needFullInstallMessage, .en): return "This update package does not include model weights.\nInstall the full package once first (about 6 GB).\nThe model will be placed automatically; later updates can start immediately."
         case (.quit, .zh): return "退出"
         case (.quit, .en): return "Quit"
+        case (.videoLengthTitle, .zh): return "视频长度需 10–30 秒"
+        case (.videoLengthTitle, .en): return "Video must be 10–30 seconds"
+        case (.videoLengthMessage, .zh): return "请上传 10–30 秒的清晰视频，建议选择孩子自然活动、互动或游戏中的连续片段"
+        case (.videoLengthMessage, .en): return "Please upload a clear 10–30 second video — ideally a continuous clip of the child naturally playing, interacting, or active."
+        case (.okGotIt, .zh): return "我知道了"
+        case (.okGotIt, .en): return "Got it"
         }
     }
 
@@ -302,5 +308,8 @@ enum L10n {
         case needFullInstallTitle
         case needFullInstallMessage
         case quit
+        case videoLengthTitle
+        case videoLengthMessage
+        case okGotIt
     }
 }
